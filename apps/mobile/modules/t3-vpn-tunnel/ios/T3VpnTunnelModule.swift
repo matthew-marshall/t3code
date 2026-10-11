@@ -1,5 +1,6 @@
 import ExpoModulesCore
 import OCCore
+import os
 
 struct VpnTunnelStartOptions: Record {
   @Field var gateway: String = ""
@@ -18,6 +19,15 @@ public final class T3VpnTunnelModule: Module {
   private var core: OpaquePointer?
   private var startPromise: Promise?
   private var state = "stopped"
+  // Recent tunnel log lines, so the settings screen can show what happened before it opened.
+  private var logLines: [String] = []
+  private static let maxLogLines = 300
+  private static let logger = Logger(subsystem: "T3VpnTunnel", category: "tunnel")
+  private static let timestamp: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.dateFormat = "HH:mm:ss"
+    return formatter
+  }()
 
   public func definition() -> ModuleDefinition {
     Name("T3VpnTunnel")
@@ -29,6 +39,12 @@ public final class T3VpnTunnelModule: Module {
 
     AsyncFunction("stop") {
       self.stop()
+    }
+
+    Function("getLog") { () -> [String] in
+      self.lock.lock()
+      defer { self.lock.unlock() }
+      return self.logLines
     }
 
     Function("getState") { () -> [String: Any] in
@@ -61,7 +77,7 @@ public final class T3VpnTunnelModule: Module {
     config.log = { ctx, level, message in
       guard let ctx, let message else { return }
       let module = Unmanaged<T3VpnTunnelModule>.fromOpaque(ctx).takeUnretainedValue()
-      module.sendEvent("onLog", ["level": Int(level), "message": String(cString: message)])
+      module.appendLog(level: Int(level), message: String(cString: message))
     }
     config.on_state = { ctx, state, detail in
       guard let ctx else { return }
@@ -85,6 +101,16 @@ public final class T3VpnTunnelModule: Module {
     lock.unlock()
   }
 
+  private func appendLog(level: Int, message: String) {
+    let line = "\(Self.timestamp.string(from: Date())) \(message)"
+    Self.logger.log("\(line, privacy: .public)")
+    lock.lock()
+    logLines.append(line)
+    if logLines.count > Self.maxLogLines { logLines.removeFirst(logLines.count - Self.maxLogLines) }
+    lock.unlock()
+    sendEvent("onLog", ["level": level, "message": line])
+  }
+
   private func handleState(_ raw: Int32, detail: String?) {
     let name: String
     switch Int(raw) {
@@ -105,6 +131,7 @@ public final class T3VpnTunnelModule: Module {
     } else if name == "stopped" {
       promise?.reject("ERR_VPN_STOPPED", detail ?? "VPN tunnel stopped")
     }
+    appendLog(level: 1, message: "State: \(name)\(detail.map { " · \($0)" } ?? "")")
     sendEvent("onState", ["state": name, "detail": detail as Any])
   }
 
