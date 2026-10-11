@@ -115,6 +115,10 @@
       "types": "./src/voice-input/index.ts",
       "default": "./src/voice-input/index.ts"
     },
+    "./voice-agent": {
+      "types": "./src/voice-agent/index.ts",
+      "default": "./src/voice-agent/index.ts"
+    },
     "./t3ToolSummary": {
       "types": "./src/t3ToolSummary.ts",
       "default": "./src/t3ToolSummary.ts"

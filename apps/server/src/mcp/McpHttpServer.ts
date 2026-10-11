@@ -124,6 +124,77 @@ export class McpClientAuthenticator extends Context.Service<
   }
 >()("t3/mcp/McpHttpServer/McpClientAuthenticator") {}
 
+/**
+ * Calls the tools registered on `/mcp` from inside the server, for callers
+ * that do not speak MCP, such as the voice agent. Calls run the registered
+ * handlers, so `McpToolAccess` still checks each one against `scope`.
+ */
+export class McpToolCaller extends Context.Service<
+  McpToolCaller,
+  {
+    readonly listTools: () => ReadonlyArray<{
+      readonly name: string;
+      readonly description: string;
+      readonly inputSchema: unknown;
+    }>;
+    /** Failures, including bad arguments, come back as `isError` text for the caller to read. */
+    readonly callTool: (
+      scope: McpInvocationContext.McpInvocationScope,
+      input: { readonly name: string; readonly arguments: Record<string, unknown> },
+    ) => Effect.Effect<{ readonly isError: boolean; readonly text: string }>;
+  }
+>()("t3/mcp/McpHttpServer/McpToolCaller") {}
+
+// In-process callers never answer elicitation or sampling, so the client handle is never used.
+const inProcessMcpClient = McpSchema.McpServerClient.of({
+  clientId: 0,
+  protocolVersion: "2025-06-18",
+  clientCapabilities: {},
+  clientInfo: { name: "t3-in-process", version: packageJson.version },
+  initializePayload: {
+    protocolVersion: "2025-06-18",
+    capabilities: {},
+    clientInfo: { name: "t3-in-process", version: packageJson.version },
+  },
+  getClient: Effect.die("In-process MCP callers do not answer client requests."),
+});
+
+const callToolResultText = (result: McpSchema.CallToolResult): string => {
+  const text = result.content
+    .flatMap((part) => (part.type === "text" ? [part.text] : []))
+    .join("\n");
+  return text.length > 0 || result.structuredContent === undefined
+    ? text
+    : JSON.stringify(result.structuredContent);
+};
+
+/** Shares the McpServer the toolkits below register on: layers memoize by reference. */
+export const layerToolCaller = Layer.effect(
+  McpToolCaller,
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    return McpToolCaller.of({
+      // Read per call: toolkits register as their layers build.
+      listTools: () =>
+        server.tools.map(({ tool }) => ({
+          name: tool.name,
+          description: tool.description ?? "",
+          inputSchema: tool.inputSchema,
+        })),
+      callTool: (scope, input) =>
+        server.callTool({ name: input.name, arguments: input.arguments }).pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+          Effect.provideService(McpSchema.McpServerClient, inProcessMcpClient),
+          Effect.map((result) => ({
+            isError: result.isError === true,
+            text: callToolResultText(result),
+          })),
+          Effect.catch((error) => Effect.succeed({ isError: true, text: error.message })),
+        ),
+    });
+  }),
+).pipe(Layer.provide(McpServer.McpServer.layer));
+
 type AuthenticatedHttpEffect = Effect.Effect<
   HttpServerResponse.HttpServerResponse,
   Types.unhandled,

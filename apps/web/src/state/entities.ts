@@ -399,3 +399,9 @@ export function useThreadRelationshipShells(
 ): ReadonlyArray<OrchestrationV2ThreadShell> {
   return useAtomValue(relationshipShellsAtomFamily(threadKey(ref)));
 }
+
+export function subscribeThreadShells(
+  listener: (shells: ReadonlyArray<EnvironmentThreadShell>) => void,
+): () => void {
+  return appAtomRegistry.subscribe(environmentThreadShells.threadShellsAtom, listener);
+}
