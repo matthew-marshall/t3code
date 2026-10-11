@@ -304,3 +304,9 @@ export function readEnvironmentThreadRefs(
 export function readThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
   return appAtomRegistry.get(environmentThreadShells.threadShellsAtom);
 }
+
+export function subscribeThreadShells(
+  listener: (shells: ReadonlyArray<EnvironmentThreadShell>) => void,
+): () => void {
+  return appAtomRegistry.subscribe(environmentThreadShells.threadShellsAtom, listener);
+}

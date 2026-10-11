@@ -167,6 +167,8 @@ function usageLimitSourceSecretName(sourceId: string): string {
 
 const redactSecret = (value: string) => (value.length > 0 ? SECRET_REDACTED : "");
 
+const VOICE_AGENT_GEMINI_API_KEY_SECRET = "voice-agent-gemini-api-key";
+
 /** Each host's settings with every secret slot's value replaced by `map(slot, value)`. */
 function mapSlotValues(
   hosts: ServerSettings["sourceControlHosts"],
@@ -246,7 +248,13 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
   const sourceControlHosts = mapSlotValues(settings.sourceControlHosts, (_slot, value) =>
     redactSecret(value),
   );
-  return { ...settings, providerInstances, usageLimitSources, sourceControlHosts };
+  return {
+    ...settings,
+    providerInstances,
+    usageLimitSources,
+    sourceControlHosts,
+    voiceAgentGeminiApiKey: redactSecret(settings.voiceAgentGeminiApiKey),
+  };
 }
 
 export function applyProviderInstanceMutation(
@@ -1032,8 +1040,20 @@ const make = Effect.gen(function* () {
           Option.isSome(secret) ? textDecoder.decode(secret.value) : "",
         );
       }
+      let voiceAgentGeminiApiKey = settings.voiceAgentGeminiApiKey;
+      if (voiceAgentGeminiApiKey === SECRET_REDACTED) {
+        const secret = yield* secretStore
+          .get(VOICE_AGENT_GEMINI_API_KEY_SECRET)
+          .pipe(
+            Effect.mapError(
+              (cause) => new ServerSettingsError({ settingsPath, operation: "read-secret", cause }),
+            ),
+          );
+        voiceAgentGeminiApiKey = Option.isSome(secret) ? textDecoder.decode(secret.value) : "";
+      }
       return {
         ...settings,
+        voiceAgentGeminiApiKey,
         providerInstances: providerInstances as ServerSettings["providerInstances"],
         usageLimitSources: usageLimitSources as ServerSettings["usageLimitSources"],
         sourceControlHosts: mapSlotValues(settings.sourceControlHosts, (slot, value) =>
@@ -1214,12 +1234,32 @@ const make = Effect.gen(function* () {
         changes.push({ kind: "remove", secretName, operation: "remove-stale-secret" });
       }
 
+      // The marker keeps the saved key; a new value moves into the store, and empty removes it.
+      let voiceAgentGeminiApiKey = next.voiceAgentGeminiApiKey;
+      if (voiceAgentGeminiApiKey.length === 0) {
+        if (current.voiceAgentGeminiApiKey.length > 0) {
+          changes.push({
+            kind: "remove",
+            secretName: VOICE_AGENT_GEMINI_API_KEY_SECRET,
+            operation: "remove-secret",
+          });
+        }
+      } else if (voiceAgentGeminiApiKey !== SECRET_REDACTED) {
+        changes.push({
+          kind: "write",
+          secretName: VOICE_AGENT_GEMINI_API_KEY_SECRET,
+          value: textEncoder.encode(voiceAgentGeminiApiKey),
+        });
+        voiceAgentGeminiApiKey = SECRET_REDACTED;
+      }
+
       return {
         settings: {
           ...next,
           providerInstances: providerInstances as ServerSettings["providerInstances"],
           usageLimitSources: usageLimitSources as ServerSettings["usageLimitSources"],
           sourceControlHosts,
+          voiceAgentGeminiApiKey,
         },
         changes,
       };

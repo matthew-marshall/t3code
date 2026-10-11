@@ -14,7 +14,10 @@ import {
   type ProviderInstanceId,
   type ScopedThreadRef,
   type SidebarProjectGroupingMode,
+  VOICE_AGENT_VOICES,
+  type VoiceAgentPace,
 } from "@t3tools/contracts";
+import { VoiceAgentApiKeyControl } from "./VoiceAgentApiKeyControl";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
@@ -205,6 +208,18 @@ const CHAT_WIDTH_LABELS: Record<ChatWidth, string> = {
   wide: "Wide",
   full: "Full",
 };
+
+const VOICE_AGENT_PACE_LABELS: Record<VoiceAgentPace, string> = {
+  slow: "Slow",
+  normal: "Normal",
+  fast: "Fast",
+};
+
+function voiceAgentVoiceLabel(name: string): string {
+  if (name === "") return "Default";
+  const voice = VOICE_AGENT_VOICES.find((candidate) => candidate.name === name);
+  return voice === undefined ? name : `${voice.name} · ${voice.style}`;
+}
 
 const DIFF_LAYOUT_LABELS: Record<DiffLayout, string> = {
   stacked: "Stacked",
@@ -607,6 +622,15 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.proactivePanelsEnabled !== DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled
         ? ["Proactive panels"]
         : []),
+      ...(settings.voiceAgentEnabled !== DEFAULT_UNIFIED_SETTINGS.voiceAgentEnabled
+        ? ["Voice agent"]
+        : []),
+      ...(settings.voiceAgentVoice !== DEFAULT_UNIFIED_SETTINGS.voiceAgentVoice
+        ? ["Voice agent voice"]
+        : []),
+      ...(settings.voiceAgentPace !== DEFAULT_UNIFIED_SETTINGS.voiceAgentPace
+        ? ["Voice agent speaking pace"]
+        : []),
       ...(settings.showSkillsInSlashMenu !== DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu
         ? ["Show skills in slash menu"]
         : []),
@@ -691,6 +715,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.diffIgnoreWhitespace,
       settings.diffLayout,
       settings.proactivePanelsEnabled,
+      settings.voiceAgentEnabled,
+      settings.voiceAgentVoice,
+      settings.voiceAgentPace,
       settings.environmentIdentificationMode,
       settings.contextWindowMeterEnabled,
       settings.fontFamilyCode,
@@ -801,6 +828,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       diffLayout: DEFAULT_UNIFIED_SETTINGS.diffLayout,
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
+      voiceAgentEnabled: DEFAULT_UNIFIED_SETTINGS.voiceAgentEnabled,
+      voiceAgentVoice: DEFAULT_UNIFIED_SETTINGS.voiceAgentVoice,
+      voiceAgentPace: DEFAULT_UNIFIED_SETTINGS.voiceAgentPace,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       composerCollapseOnScroll: DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
@@ -2715,6 +2745,139 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+
+        <SettingsRow
+          {...searchableSetting("voice-agent")}
+          description="Beta. Talk to T3 Code hands-free from the sidebar, using Gemini Live."
+          resetAction={
+            settings.voiceAgentEnabled !== DEFAULT_UNIFIED_SETTINGS.voiceAgentEnabled ? (
+              <SettingResetButton
+                label="voice agent"
+                onClick={() =>
+                  updateSettings({
+                    voiceAgentEnabled: DEFAULT_UNIFIED_SETTINGS.voiceAgentEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.voiceAgentEnabled}
+              onCheckedChange={(checked) => updateSettings({ voiceAgentEnabled: Boolean(checked) })}
+              aria-label="Voice agent"
+            />
+          }
+        />
+
+        {settings.voiceAgentEnabled ? (
+          <>
+            <SettingsRow
+              {...searchableSetting("voice-agent-api-key")}
+              description={
+                <>
+                  Stored on this environment&apos;s server, never on this device. Get a key from{" "}
+                  <a
+                    className="underline underline-offset-2"
+                    href="https://aistudio.google.com/apikey"
+                    target="_blank"
+                    rel="noreferrer noopener"
+                  >
+                    Google AI Studio
+                  </a>
+                  .
+                </>
+              }
+              control={
+                <VoiceAgentApiKeyControl
+                  saved={settings.voiceAgentGeminiApiKey.length > 0}
+                  onSave={(apiKey) => updateSettings({ voiceAgentGeminiApiKey: apiKey })}
+                />
+              }
+            />
+
+            <SettingsRow
+              {...searchableSetting("voice-agent-voice")}
+              description="The voice the agent speaks with. Changing it mid-conversation reconnects."
+              resetAction={
+                settings.voiceAgentVoice !== DEFAULT_UNIFIED_SETTINGS.voiceAgentVoice ? (
+                  <SettingResetButton
+                    label="voice agent voice"
+                    onClick={() =>
+                      updateSettings({ voiceAgentVoice: DEFAULT_UNIFIED_SETTINGS.voiceAgentVoice })
+                    }
+                  />
+                ) : null
+              }
+              control={
+                <Select
+                  value={settings.voiceAgentVoice}
+                  onValueChange={(value) => {
+                    if (typeof value === "string") updateSettings({ voiceAgentVoice: value });
+                  }}
+                >
+                  <SelectTrigger
+                    size="sm"
+                    className="w-full sm:w-48"
+                    aria-label="Voice agent voice"
+                  >
+                    <SelectValue>{voiceAgentVoiceLabel(settings.voiceAgentVoice)}</SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup align="end" alignItemWithTrigger={false}>
+                    <SelectItem hideIndicator value="">
+                      {voiceAgentVoiceLabel("")}
+                    </SelectItem>
+                    {VOICE_AGENT_VOICES.map((voice) => (
+                      <SelectItem hideIndicator key={voice.name} value={voice.name}>
+                        {voiceAgentVoiceLabel(voice.name)}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              }
+            />
+
+            <SettingsRow
+              {...searchableSetting("voice-agent-pace")}
+              description="How quickly the agent talks."
+              resetAction={
+                settings.voiceAgentPace !== DEFAULT_UNIFIED_SETTINGS.voiceAgentPace ? (
+                  <SettingResetButton
+                    label="voice agent speaking pace"
+                    onClick={() =>
+                      updateSettings({ voiceAgentPace: DEFAULT_UNIFIED_SETTINGS.voiceAgentPace })
+                    }
+                  />
+                ) : null
+              }
+              control={
+                <Select
+                  value={settings.voiceAgentPace}
+                  onValueChange={(value) => {
+                    if (value === "slow" || value === "normal" || value === "fast") {
+                      updateSettings({ voiceAgentPace: value });
+                    }
+                  }}
+                >
+                  <SelectTrigger
+                    size="sm"
+                    className="w-full sm:w-40"
+                    aria-label="Voice agent speaking pace"
+                  >
+                    <SelectValue>{VOICE_AGENT_PACE_LABELS[settings.voiceAgentPace]}</SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup align="end" alignItemWithTrigger={false}>
+                    {(["slow", "normal", "fast"] as const).map((pace) => (
+                      <SelectItem hideIndicator key={pace} value={pace}>
+                        {VOICE_AGENT_PACE_LABELS[pace]}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              }
+            />
+          </>
+        ) : null}
 
         <SettingsRow
           {...searchableSetting("skills-in-slash-menu")}
