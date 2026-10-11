@@ -76,3 +76,22 @@ export class SshEnvironmentGateway extends Context.Service<
     ) => Effect.Effect<void, ConnectionAttemptError>;
   }
 >()("@t3tools/client-runtime/platform/capabilities/SshEnvironmentGateway") {}
+
+export interface DirectEndpoint {
+  readonly httpBaseUrl: string;
+  readonly wsBaseUrl: string;
+}
+
+/**
+ * Optional. Rewrites a direct (bearer) server endpoint right before it is used, e.g. to
+ * route it through an in-app tunnel. Saved profiles keep the real endpoint. Platforms
+ * that do not provide it connect to the endpoint as saved.
+ */
+export class DirectEndpointTransport extends Context.Service<
+  DirectEndpointTransport,
+  {
+    readonly resolve: (
+      endpoint: DirectEndpoint,
+    ) => Effect.Effect<DirectEndpoint, ConnectionAttemptError>;
+  }
+>()("@t3tools/client-runtime/platform/capabilities/DirectEndpointTransport") {}

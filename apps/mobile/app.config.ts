@@ -269,6 +269,10 @@ const config: ExpoConfig = {
         "UIInterfaceOrientationLandscapeLeft",
         "UIInterfaceOrientationLandscapeRight",
       ],
+      // Personal Team builds sit next to the App Store app; give them their own home-screen name.
+      ...(isIosPersonalTeamBuild
+        ? { CFBundleDisplayName: repoEnv.T3CODE_IOS_PERSONAL_TEAM_APP_NAME?.trim() || "T3 VPN" }
+        : {}),
       NSAppTransportSecurity: {
         NSAllowsArbitraryLoads: true,
       },
@@ -321,6 +325,9 @@ const config: ExpoConfig = {
     favicon: variant.assets.appIcon,
   },
   plugins: [
+    // Registered first so its entitlements mod runs last (same-type mods run
+    // last-registered-first); otherwise expo-notifications re-adds aps-environment.
+    ...(isIosPersonalTeamBuild ? ["./plugins/withoutIosPersonalTeamCapabilities.cjs"] : []),
     "expo-asset",
     [
       "expo-font",
@@ -359,8 +366,8 @@ const config: ExpoConfig = {
         mode: APP_VARIANT === "development" ? "development" : "production",
       },
     ],
-    // appleSignIn must be gated here: withoutIosPersonalTeamCapabilities.cjs runs before
-    // plugins earlier in this array, so it cannot strip the entitlement Clerk would add.
+    // Personal Team builds skip native Sign in with Apple entirely; the entitlement is also
+    // stripped by withoutIosPersonalTeamCapabilities.cjs, which is registered first so it runs last.
     ["@clerk/expo", { theme: "./clerk-theme.json", appleSignIn: !isIosPersonalTeamBuild }],
     "expo-web-browser",
     [
@@ -466,7 +473,6 @@ const config: ExpoConfig = {
     "./plugins/withAndroidModernAlertDialog.cjs",
     "./plugins/withAndroidPredictiveBackCompat.cjs",
     "./plugins/withAndroidTabletOrientation.cjs",
-    ...(isIosPersonalTeamBuild ? ["./plugins/withoutIosPersonalTeamCapabilities.cjs"] : []),
   ],
   extra: {
     appVariant: APP_VARIANT,
