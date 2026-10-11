@@ -123,6 +123,39 @@ function layerPairingHttp(
 }
 
 describe("connection onboarding", () => {
+  it.effect("pairs through a direct endpoint transport but saves the real endpoint", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+      const transportLayer = Layer.succeed(
+        ClientCapabilities.DirectEndpointTransport,
+        ClientCapabilities.DirectEndpointTransport.of({
+          resolve: () =>
+            Effect.succeed({
+              httpBaseUrl: "http://127.0.0.1:49152/",
+              wsBaseUrl: "ws://127.0.0.1:49152/",
+            }),
+        }),
+      );
+      const registration = yield* preparePairingRegistration({
+        host: "http://10.1.2.3:3773",
+        pairingCode: "pairing-token",
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(layerClientPresentation, layerPairingHttp(calls), transportLayer),
+        ),
+      );
+
+      expect(calls.map((call) => call.url)).toEqual([
+        "http://127.0.0.1:49152/.well-known/t3/environment",
+        "http://127.0.0.1:49152/oauth/token",
+      ]);
+      expect(registration.profile).toMatchObject({
+        httpBaseUrl: "http://10.1.2.3:3773/",
+        wsBaseUrl: "ws://10.1.2.3:3773/",
+      });
+    }),
+  );
+
   it.effect("prepares a persisted bearer registration from pairing details", () =>
     Effect.gen(function* () {
       const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];

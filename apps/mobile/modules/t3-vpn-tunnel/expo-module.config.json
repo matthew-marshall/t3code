@@ -1,0 +1,7 @@
+{
+  "platforms": ["apple"],
+  "apple": {
+    "modules": ["T3VpnTunnelModule"],
+    "podspecPath": "T3VpnTunnel.podspec"
+  }
+}

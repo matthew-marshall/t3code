@@ -90,6 +90,8 @@ import { NewTaskFlowProvider } from "./features/threads/new-task-flow-provider";
 import { NewTaskRouteScreen } from "./features/threads/NewTaskRouteScreen";
 import { SettingsAppearanceRouteScreen } from "./features/settings/SettingsAppearanceRouteScreen";
 import { SettingsClientStorageRouteScreen } from "./features/settings/SettingsClientStorageRouteScreen";
+import { SettingsVpnTunnelRouteScreen } from "./features/settings/SettingsVpnTunnelRouteScreen";
+import { SettingsVpnTunnelLoginRouteScreen } from "./features/settings/SettingsVpnTunnelLoginRouteScreen";
 import { SettingsDiagnosticsRouteScreen } from "./features/diagnostics/SettingsDiagnosticsRouteScreen";
 import { SettingsProviderAccountsRouteScreen } from "./features/settings/SettingsProviderAccountsRouteScreen";
 import { SettingsAuthRouteScreen } from "./features/settings/SettingsAuthRouteScreen";
@@ -383,6 +385,20 @@ const SettingsContentStack = createV5SheetStackNavigator({
       linking: "client-storage",
       options: {
         title: "Client Storage",
+      },
+    }),
+    SettingsVpnTunnel: createNativeStackScreen({
+      screen: SettingsVpnTunnelRouteScreen,
+      linking: "vpn-tunnel",
+      options: {
+        title: "VPN Tunnel",
+      },
+    }),
+    SettingsVpnTunnelLogin: createNativeStackScreen({
+      screen: SettingsVpnTunnelLoginRouteScreen,
+      linking: "vpn-tunnel/sign-in",
+      options: {
+        title: "VPN Sign In",
       },
     }),
     SettingsDiagnostics: createNativeStackScreen({
