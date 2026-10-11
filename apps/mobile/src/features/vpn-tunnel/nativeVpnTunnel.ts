@@ -19,6 +19,8 @@ interface NativeVpnTunnelModule {
   start(options: VpnTunnelStartOptions): Promise<{ readonly localPort: number }>;
   stop(): Promise<void>;
   getState(): { readonly state: VpnTunnelState; readonly localPort?: number };
+  /** Recent timestamped tunnel log lines, oldest first. */
+  getLog(): ReadonlyArray<string>;
   addListener(
     event: "onState",
     listener: (event: { readonly state: VpnTunnelState; readonly detail?: string }) => void,
