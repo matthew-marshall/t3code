@@ -255,7 +255,9 @@ const config: ExpoConfig = {
     // Pin code signing to the T3 Tools team so non-interactive `expo run:ios`
     // does not fall back to a personal team (which cannot sign app groups,
     // Sign in with Apple, or push notification entitlements).
-    appleTeamId: "ARK85ZXQ4Z",
+    // Personal Team builds can name their team so Xcode does not need a manual Team pick.
+    appleTeamId:
+      (isIosPersonalTeamBuild && repoEnv.T3CODE_IOS_PERSONAL_TEAM_ID?.trim()) || "ARK85ZXQ4Z",
     associatedDomains: [
       `applinks:${variant.relyingParty}`,
       `webcredentials:${variant.relyingParty}`,
