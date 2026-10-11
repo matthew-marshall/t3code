@@ -48,6 +48,8 @@
 struct conn {
 	struct conn *next;
 	struct occore *core;
+	unsigned id;
+	unsigned long long sent, received; /* bytes local->remote, remote->local */
 	int fd;
 	struct tcp_pcb *pcb;
 	struct pbuf *pending;   /* bytes from the remote not yet written to fd */
@@ -88,6 +90,8 @@ struct occore {
 	ip_addr_t target_ip;
 	int target_state;       /* 0 unresolved, 1 resolving, 2 resolved */
 	struct conn *conns;
+	unsigned next_conn_id;
+	unsigned long long tun_tx, tun_rx; /* packets to / from the gateway */
 	unsigned char pkt[AF_PREFIX_LEN + MAX_PACKET];
 };
 
@@ -248,6 +252,7 @@ static err_t tun_output(struct netif *netif, struct pbuf *p, const ip4_addr_t *d
 	pbuf_copy_partial(p, core->pkt + AF_PREFIX_LEN, p->tot_len, 0);
 	if (send(core->net_tun_fd, core->pkt, AF_PREFIX_LEN + p->tot_len, 0) < 0)
 		return ERR_IF; /* datagram dropped; TCP will retransmit */
+	core->tun_tx++;
 	return ERR_OK;
 }
 
@@ -268,6 +273,7 @@ static void tun_input(struct occore *core)
 			return;
 		if (!core->netif_up)
 			continue;
+		core->tun_rx++;
 		n -= AF_PREFIX_LEN;
 		p = pbuf_alloc(PBUF_RAW, (u16_t)n, PBUF_POOL);
 		if (!p)
@@ -289,6 +295,7 @@ static void conn_flush(struct conn *c)
 				c->dead = 1;
 			return;
 		}
+		c->received += (unsigned long long)n;
 		if (c->pcb)
 			tcp_recved(c->pcb, (u16_t)n);
 		c->pending = pbuf_free_header(c->pending, (u16_t)n);
@@ -320,8 +327,10 @@ static err_t conn_connected(void *arg, struct tcp_pcb *pcb, err_t err)
 	struct conn *c = arg;
 	(void)pcb;
 	(void)err;
-	if (c)
+	if (c) {
 		c->remote_connected = 1;
+		logf_(c->core, PRG_INFO, "Forward #%u: connected to target", c->id);
+	}
 	return ERR_OK;
 }
 
@@ -333,8 +342,9 @@ static void conn_err(void *arg, err_t err)
 	/* lwIP has already freed the pcb. */
 	c->pcb = NULL;
 	c->dead = 1;
-	if (!c->remote_connected)
-		logf_(c->core, PRG_ERR, "Forward connect failed: lwIP err %d", err);
+	/* lwIP err_t: -13 aborted, -14 reset, -15 closed, -4 routing, -3 timeout. */
+	logf_(c->core, PRG_ERR, "Forward #%u: %s (lwIP err %d)", c->id,
+	      c->remote_connected ? "connection reset" : "connect failed", err);
 }
 
 static void conn_start(struct conn *c)
@@ -380,6 +390,7 @@ static void conn_read_local(struct conn *c)
 		room = sizeof(buf);
 	n = read(c->fd, buf, room);
 	if (n > 0) {
+		c->sent += (unsigned long long)n;
 		if (tcp_write(c->pcb, buf, (u16_t)n, TCP_WRITE_FLAG_COPY) != ERR_OK)
 			c->dead = 1;
 		else
@@ -441,7 +452,9 @@ static void accept_local(struct occore *core)
 			continue;
 		}
 		c->core = core;
+		c->id = ++core->next_conn_id;
 		c->fd = fd;
+		logf_(core, PRG_INFO, "Forward #%u: accepted", c->id);
 		c->next = core->conns;
 		core->conns = c;
 		if (core->target_state == 2)
@@ -519,6 +532,10 @@ static void *net_thread_main(void *arg)
 			int done = c->fd_eof && c->remote_eof && !c->pending;
 			if (c->dead || done) {
 				*pp = c->next;
+				logf_(core, PRG_INFO,
+				      "Forward #%u: closed%s (sent %llu, received %llu bytes; tunnel packets out %llu, in %llu)",
+				      c->id, c->dead ? " with error" : "", c->sent, c->received, core->tun_tx,
+				      core->tun_rx);
 				conn_free(c);
 			} else {
 				pp = &c->next;

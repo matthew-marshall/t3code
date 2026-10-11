@@ -17,7 +17,7 @@ import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
 
-const MAX_LOG_LINES = 40;
+const MAX_LOG_LINES = 300;
 
 /**
  * Configures the in-app GlobalProtect tunnel. Environments whose host and port match the
@@ -36,7 +36,7 @@ export function SettingsVpnTunnelRouteScreen() {
   const [state, setState] = useState<{ state: VpnTunnelState; detail?: string }>(() => ({
     state: nativeVpnTunnel?.getState().state ?? "stopped",
   }));
-  const [log, setLog] = useState<ReadonlyArray<string>>([]);
+  const [log, setLog] = useState<ReadonlyArray<string>>(() => nativeVpnTunnel?.getLog() ?? []);
 
   // Reload on focus so a finished sign-in shows up when returning from the login screen.
   useFocusEffect(
