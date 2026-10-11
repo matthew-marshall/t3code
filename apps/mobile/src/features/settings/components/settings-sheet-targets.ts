@@ -18,6 +18,8 @@ export type SettingsSheetTarget =
   | "SettingsScheduledTasks"
   | "SettingsProjectGrouping"
   | "SettingsClientStorage"
+  | "SettingsVpnTunnel"
+  | "SettingsVpnTunnelLogin"
   | "SettingsDiagnostics"
   | "SettingsOpenSourceLicenses"
   | "SettingsUsage";

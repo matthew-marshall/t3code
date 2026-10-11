@@ -9,6 +9,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
+import { nativeVpnTunnel } from "../vpn-tunnel/nativeVpnTunnel";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
@@ -92,6 +93,13 @@ function ConfiguredSettingsRouteScreen() {
             valuePosition="trailing"
             target="SettingsEnvironments"
           />
+          {nativeVpnTunnel !== null ? (
+            <SettingsRow
+              icon={{ ios: "lock.shield", android: "lock" }}
+              label="VPN Tunnel"
+              target="SettingsVpnTunnel"
+            />
+          ) : null}
           <SettingsRow icon="bell.badge" label="Notifications" target="SettingsNotifications" />
         </SettingsSection>
 
@@ -125,6 +133,13 @@ function LocalSettingsRouteScreen() {
             valuePosition="trailing"
             target="SettingsEnvironments"
           />
+          {nativeVpnTunnel !== null ? (
+            <SettingsRow
+              icon={{ ios: "lock.shield", android: "lock" }}
+              label="VPN Tunnel"
+              target="SettingsVpnTunnel"
+            />
+          ) : null}
         </SettingsSection>
 
         <SettingsIndexSections />

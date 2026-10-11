@@ -28,6 +28,14 @@ import { clearThreadOutboxEnvironment } from "../state/thread-outbox-removal";
 import { clearComposerDraftsEnvironment } from "../state/use-composer-drafts";
 import { clearThreadComposerErrorsForEnvironment } from "../state/thread-composer-error";
 import { mobileApplicationActiveWakeup } from "./app-state-wakeups";
+import { nativeVpnTunnel } from "../features/vpn-tunnel/nativeVpnTunnel";
+import {
+  ensureVpnTunnel,
+  isTunnelTarget,
+  loadVpnTunnelConfig,
+  rewriteToTunnel,
+  VpnTunnelSignInRequiredError,
+} from "../features/vpn-tunnel/vpnTunnel";
 import * as ConnectionStorage from "./storage";
 
 function networkStatus(state: Network.NetworkState): "unknown" | "offline" | "online" {
@@ -154,6 +162,31 @@ const layerWakeups = Wakeups.layer({
   ),
 });
 
+// Routes the configured VPN tunnel target through the in-app GlobalProtect tunnel.
+const vpnTunnelTransport = ClientCapabilities.DirectEndpointTransport.of({
+  resolve: Effect.fn("mobile.vpnTunnel.resolve")(function* (endpoint) {
+    const config = yield* Effect.promise(() => loadVpnTunnelConfig());
+    if (config === null || !isTunnelTarget(endpoint, config)) return endpoint;
+    if (new URL(endpoint.httpBaseUrl).protocol === "https:") {
+      return yield* new ConnectionBlockedError({
+        reason: "unsupported",
+        detail: "The VPN tunnel only supports http:// servers.",
+      });
+    }
+    const localPort = yield* Effect.tryPromise({
+      try: () => ensureVpnTunnel(config),
+      catch: (cause) => {
+        const detail = `VPN tunnel: ${cause instanceof Error ? cause.message : String(cause)}`;
+        return cause instanceof VpnTunnelSignInRequiredError ||
+          detail.includes("rejected the cookie")
+          ? new ConnectionBlockedError({ reason: "authentication", detail })
+          : new ConnectionTransientError({ reason: "network", detail });
+      },
+    });
+    return rewriteToTunnel(endpoint, localPort);
+  }),
+});
+
 const layerCapabilities = Layer.effectContext(
   Effect.gen(function* () {
     const storage = yield* MobileStorage.MobileStorage;
@@ -221,6 +254,10 @@ const layerCapabilities = Layer.effectContext(
           metadata: authClientMetadata(Constants.expoConfig?.version),
         }),
       ),
+      (context) =>
+        nativeVpnTunnel === null
+          ? context
+          : Context.add(context, ClientCapabilities.DirectEndpointTransport, vpnTunnelTransport),
       Context.add(
         ClientCapabilities.SshEnvironmentGateway,
         ClientCapabilities.SshEnvironmentGateway.of({
