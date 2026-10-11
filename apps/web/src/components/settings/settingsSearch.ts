@@ -436,6 +436,30 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["automatically open diff pull request pr right panel agent completion"],
   },
   {
+    id: "voice-agent",
+    title: "Voice agent",
+    to: "/settings/general",
+    searchTerms: ["voice speech talk microphone gemini live hands-free push to talk"],
+  },
+  {
+    id: "voice-agent-api-key",
+    title: "Gemini API key",
+    to: "/settings/general",
+    searchTerms: ["voice agent gemini api key token google ai studio"],
+  },
+  {
+    id: "voice-agent-voice",
+    title: "Voice agent voice",
+    to: "/settings/general",
+    searchTerms: ["voice agent speaker sound gemini puck kore"],
+  },
+  {
+    id: "voice-agent-pace",
+    title: "Voice agent speaking pace",
+    to: "/settings/general",
+    searchTerms: ["voice agent speed rate fast slow pace talking"],
+  },
+  {
     id: "skills-in-slash-menu",
     title: "Show skills in slash menu",
     to: "/settings/general",

@@ -1719,6 +1719,37 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 
+  it.effect("keeps the voice agent's Gemini key in the secret store", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const secrets = yield* ServerSecretStore.ServerSecretStore;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const stored = secrets
+        .get("voice-agent-gemini-api-key")
+        .pipe(Effect.map(Option.map((secret) => new TextDecoder().decode(secret))));
+
+      const saved = yield* serverSettings.updateSettings({ voiceAgentGeminiApiKey: "gemini-key" });
+      assert.equal(saved.voiceAgentGeminiApiKey, "gemini-key");
+      assert.notInclude(yield* fileSystem.readFileString(serverConfig.settingsPath), "gemini-key");
+      assert.deepEqual(yield* stored, Option.some("gemini-key"));
+      assert.equal(
+        ServerSettingsModule.redactServerSettingsForClient(saved).voiceAgentGeminiApiKey,
+        "\u2022\u2022\u2022\u2022\u2022\u2022",
+      );
+
+      // A client echoing the redacted marker back keeps the saved key.
+      yield* serverSettings.updateSettings({
+        voiceAgentGeminiApiKey: "\u2022\u2022\u2022\u2022\u2022\u2022",
+      });
+      assert.equal((yield* serverSettings.getSettings).voiceAgentGeminiApiKey, "gemini-key");
+
+      yield* serverSettings.updateSettings({ voiceAgentGeminiApiKey: "" });
+      assert.equal((yield* serverSettings.getSettings).voiceAgentGeminiApiKey, "");
+      assert.isTrue(Option.isNone(yield* stored));
+    }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
   it.effect("keeps the retired keys for another load when a token cannot be copied", () => {
     const cause = new ServerSecretStore.SecretStoreReadError({
       resource: "bitbucket-access-token",
