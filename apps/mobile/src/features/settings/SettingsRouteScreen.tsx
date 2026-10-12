@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
+import { isVoiceAgentAudioAvailable } from "../voice-agent/nativeVoiceAudio";
 import { nativeVpnTunnel } from "../vpn-tunnel/nativeVpnTunnel";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsRow } from "./components/SettingsRow";
@@ -172,6 +173,9 @@ function SettingsIndexSections() {
           <>
             <SettingsRow icon="keyboard" label="Keyboard" target="SettingsKeyboard" />
             <SettingsRow icon="mic" label="Microphone" target="SettingsMicrophone" />
+            {isVoiceAgentAudioAvailable ? (
+              <SettingsRow icon="waveform" label="Voice Agent" target="SettingsVoiceAgent" />
+            ) : null}
           </>
         ) : null}
       </SettingsSection>

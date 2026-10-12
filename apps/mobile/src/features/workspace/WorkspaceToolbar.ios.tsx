@@ -8,6 +8,7 @@ import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/Stac
 import { NativeWorkspaceTabActivityContext } from "../../native/v5-workspace-context";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import { useVoiceAgentToggle } from "../voice-agent/useVoiceAgentToggle";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 
 /** Root actions stay in the header; UIKit owns the bottom compose button. */
@@ -23,6 +24,7 @@ export function WorkspaceToolbar(props: {
   const { isTabActive } = workspace;
   const tabActive = use(NativeWorkspaceTabActivityContext)?.active ?? true;
   const { panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
+  const voiceAgent = useVoiceAgentToggle();
   const searchRef = useRef<SearchBarCommands>(null);
   const tab = workspace.state.tabs[workspace.state.selectedTab];
   const selectedTab = workspace.state.selectedTab;
@@ -109,6 +111,13 @@ export function WorkspaceToolbar(props: {
           icon="magnifyingglass"
           onPress={focusSearch}
         />
+        {voiceAgent.visible ? (
+          <NativeHeaderToolbar.Button
+            accessibilityLabel={voiceAgent.active ? "End voice" : "Talk to T3 Code"}
+            icon={voiceAgent.active ? "waveform.circle.fill" : "waveform"}
+            onPress={voiceAgent.toggle}
+          />
+        ) : null}
       </NativeHeaderToolbar>
       <NativeHeaderToolbar placement="bottom">
         {nativeToolbarCompose ? <NativeHeaderToolbar.Spacer flexible /> : null}
