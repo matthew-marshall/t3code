@@ -1,5 +1,23 @@
 import * as Schema from "effect/Schema";
 
+/** The realtime voice API the voice agent talks to. Each device keeps its own key for each. */
+export const VoiceAgentProviderId = Schema.Literals(["gemini", "openai"]);
+export type VoiceAgentProviderId = typeof VoiceAgentProviderId.Type;
+
+/** OpenAI Realtime's built-in voices; OpenAI recommends Marin and Cedar. */
+export const VOICE_AGENT_OPENAI_VOICES = [
+  { name: "marin", style: "Natural" },
+  { name: "cedar", style: "Natural" },
+  { name: "alloy", style: "Neutral" },
+  { name: "ash", style: "Clear" },
+  { name: "ballad", style: "Expressive" },
+  { name: "coral", style: "Warm" },
+  { name: "echo", style: "Resonant" },
+  { name: "sage", style: "Calm" },
+  { name: "shimmer", style: "Bright" },
+  { name: "verse", style: "Versatile" },
+] as const;
+
 /** Gemini's prebuilt voices, with Google's one-word description of each. */
 export const VOICE_AGENT_VOICES = [
   { name: "Zephyr", style: "Bright" },
@@ -34,6 +52,6 @@ export const VOICE_AGENT_VOICES = [
   { name: "Sulafat", style: "Warm" },
 ] as const;
 
-/** Live has no speaking-rate parameter; pace is asked for in the instructions. */
+/** Gemini Live has no speaking-rate parameter, so it is asked for in the instructions; OpenAI sets a speed. */
 export const VoiceAgentPace = Schema.Literals(["slow", "normal", "fast"]);
 export type VoiceAgentPace = typeof VoiceAgentPace.Type;

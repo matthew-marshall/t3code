@@ -124,3 +124,23 @@ export function createInboxReturnTracker() {
       returns.get(keyOf(thread)),
   };
 }
+
+/**
+ * Completed but not yet seen: the "Done" marker in the thread lists. The
+ * visited watermark is server state (lastVisitedAt), so web and mobile agree.
+ * Never-visited threads count as read, so a fresh environment does not light
+ * up its whole history, and servers that predate the field never report it.
+ */
+export function threadHasUnseenCompletion(thread: {
+  readonly latestRun: { readonly completedAt?: string | null } | null;
+  readonly lastVisitedAt?: string | null;
+}): boolean {
+  const completedAt = thread.latestRun?.completedAt;
+  if (!completedAt) return false;
+  const completedAtMs = Date.parse(completedAt);
+  if (Number.isNaN(completedAtMs)) return false;
+  if (!thread.lastVisitedAt) return false;
+  const lastVisitedAtMs = Date.parse(thread.lastVisitedAt);
+  if (Number.isNaN(lastVisitedAtMs)) return true;
+  return completedAtMs > lastVisitedAtMs;
+}

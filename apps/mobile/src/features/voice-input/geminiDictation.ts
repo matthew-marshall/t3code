@@ -3,11 +3,11 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import { File } from "expo-file-system";
 
 import { mobilePreferencesAtom } from "../../state/preferences";
-import { readGeminiKey } from "../voice-agent/geminiKey";
+import { geminiKey } from "../voice-agent/apiKeys";
 
 /** Dictation through Gemini, which removes filler words; it uses the voice agent's key. */
 export const geminiVoiceTranscriber = createGeminiVoiceTranscriber({
-  readApiKey: readGeminiKey,
+  readApiKey: geminiKey.read,
   // RecordingPresets.HIGH_QUALITY records AAC in an .m4a container.
   readRecording: async (uri) => ({ data: await new File(uri).base64(), mimeType: "audio/m4a" }),
   locale: Intl.DateTimeFormat().resolvedOptions().locale,

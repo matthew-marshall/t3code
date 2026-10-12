@@ -38,10 +38,15 @@ export function liveSetupMessage(input: {
           : { speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: input.voice } } } }),
       },
       systemInstruction: { parts: [{ text: input.systemInstruction }] },
-      tools: [{ functionDeclarations: input.tools }],
-      // Push-to-talk marks turns itself, so the server must not cut them on silence.
+      // Google Search runs inside Live: answers come back grounded without a tool round trip.
+      tools: [{ functionDeclarations: input.tools }, { googleSearch: {} }],
+      // Push-to-talk marks turns itself, so the server must not cut them on silence. Hands-free,
+      // low sensitivity keeps leftover echo of the agent's own voice from interrupting it.
       realtimeInputConfig: {
-        automaticActivityDetection: { disabled: input.mode === "push-to-talk" },
+        automaticActivityDetection:
+          input.mode === "push-to-talk"
+            ? { disabled: true }
+            : { disabled: false, startOfSpeechSensitivity: "START_SENSITIVITY_LOW" },
       },
       inputAudioTranscription: {},
       outputAudioTranscription: {},
@@ -58,6 +63,20 @@ export function liveAudioMessage(base64Pcm: string) {
       audio: { data: base64Pcm, mimeType: `audio/pcm;rate=${LIVE_INPUT_SAMPLE_RATE}` },
     },
   };
+}
+
+/** The microphone stopped sending; the next audio message reopens the stream. */
+export const liveAudioStreamEndMessage = { realtimeInput: { audioStreamEnd: true } };
+
+/** Loudness of 16-bit PCM in dBFS, for `VoiceAgentAudio` implementations that see raw samples. */
+export function pcmLevelDbfs(samples: Int16Array): number {
+  let sumOfSquares = 0;
+  for (const sample of samples) {
+    const value = sample / 0x8000;
+    sumOfSquares += value * value;
+  }
+  const rms = Math.sqrt(sumOfSquares / Math.max(samples.length, 1));
+  return rms > 0 ? 20 * Math.log10(rms) : -120;
 }
 
 export function liveTextMessage(text: string) {

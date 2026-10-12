@@ -1,5 +1,5 @@
 import { EasDeviceHostConfigs, SshDeviceHostConfigs } from "./device.ts";
-import { VoiceAgentPace } from "./voiceAgent.ts";
+import { VoiceAgentPace, VoiceAgentProviderId } from "./voiceAgent.ts";
 import {
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
@@ -442,10 +442,14 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed("queue")),
   ),
   proactivePanelsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  // Beta: a live voice agent (Gemini Live) that drives T3 Code through its MCP tools.
+  // Beta: a live voice agent (Gemini Live or OpenAI Realtime) that drives T3 Code.
   voiceAgentEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  // Empty uses Gemini's default voice.
+  voiceAgentProvider: VoiceAgentProviderId.pipe(
+    Schema.withDecodingDefault(Effect.succeed("gemini")),
+  ),
+  // Empty uses the provider's default voice. Each provider has its own voices.
   voiceAgentVoice: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  voiceAgentOpenAIVoice: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   voiceAgentPace: VoiceAgentPace.pipe(Schema.withDecodingDefault(Effect.succeed("normal"))),
   // Beta: a composer microphone that transcribes with Gemini 3.5 Transcribe (the voice agent's key).
   dictationEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -1647,7 +1651,9 @@ export const ClientSettingsPatch = Schema.Struct({
   followUpBehavior: Schema.optionalKey(Schema.Literals(["queue", "steer"])),
   proactivePanelsEnabled: Schema.optionalKey(Schema.Boolean),
   voiceAgentEnabled: Schema.optionalKey(Schema.Boolean),
+  voiceAgentProvider: Schema.optionalKey(VoiceAgentProviderId),
   voiceAgentVoice: Schema.optionalKey(Schema.String),
+  voiceAgentOpenAIVoice: Schema.optionalKey(Schema.String),
   voiceAgentPace: Schema.optionalKey(VoiceAgentPace),
   dictationEnabled: Schema.optionalKey(Schema.Boolean),
   showSkillsInSlashMenu: Schema.optionalKey(Schema.Boolean),

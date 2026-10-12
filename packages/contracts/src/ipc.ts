@@ -14,6 +14,7 @@ import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import { type ClientSettings, type QuitConfirmationMode, SnapShotShortcut } from "./settings.ts";
 import type { EditorId } from "./editor.ts";
+import type { VoiceAgentProviderId } from "./voiceAgent.ts";
 import type { PreviewForwardedShortcut } from "./keybindings.ts";
 
 import type {
@@ -1052,10 +1053,13 @@ export interface DesktopBridge {
   getLocalEnvironmentBearerToken: () => Promise<string>;
   getClientSettings: () => Promise<ClientSettings | null>;
   setClientSettings: (settings: ClientSettings) => Promise<void>;
-  /** The voice agent's Gemini key, encrypted with the OS keychain; null when none is saved. */
-  getVoiceAgentKey?: () => Promise<string | null>;
+  /**
+   * The voice agent's key for a provider (Gemini when omitted), encrypted with the OS keychain;
+   * null when none is saved.
+   */
+  getVoiceAgentKey?: (provider?: VoiceAgentProviderId) => Promise<string | null>;
   /** An empty key removes the saved one. */
-  setVoiceAgentKey?: (key: string) => Promise<void>;
+  setVoiceAgentKey?: (key: string, provider?: VoiceAgentProviderId) => Promise<void>;
   getConnectionCatalog?: () => Promise<string | null>;
   setConnectionCatalog?: (catalog: string) => Promise<boolean>;
   clearConnectionCatalog?: () => Promise<void>;

@@ -1,11 +1,14 @@
+import type { VoiceAgentProviderId } from "@t3tools/contracts";
 import {
+  createGeminiVoiceProvider,
+  createOpenAIVoiceProvider,
   createVoiceAgentTools,
   createVoiceAgentWorkspace,
   describeVoiceThreadUpdates,
-  requestLiveToken,
   snapshotVoiceThreads,
   VOICE_AGENT_INSTRUCTIONS,
   type VoiceAgentMode,
+  type VoiceAgentProvider as VoiceAgentRealtimeProvider,
   VoiceAgentSessionController,
   type VoiceAgentState,
 } from "@t3tools/client-runtime/voice-agent";
@@ -31,7 +34,7 @@ import { serverEnvironment } from "~/state/server";
 import { environmentThreadShells, threadEnvironment } from "~/state/threads";
 import { vcsEnvironment } from "~/state/vcs";
 import { buildThreadRouteParams } from "~/threadRoutes";
-import { readGeminiKey } from "./geminiKey";
+import { readGeminiKey, readOpenAIKey } from "./voiceAgentKeys";
 import { createWebVoiceAudio } from "./webVoiceAudio";
 
 const MODE_STORAGE_KEY = "t3code:voice-agent-mode";
@@ -48,6 +51,7 @@ interface VoiceAgentHandle {
   readonly stop: () => void;
   readonly setMode: (mode: VoiceAgentMode) => void;
   readonly setLatest: (latest: VoiceAgentLatest) => void;
+  readonly setProvider: (provider: VoiceAgentProviderId) => void;
 }
 
 const VoiceAgentContext = createContext<VoiceAgentHandle | null>(null);
@@ -73,7 +77,7 @@ interface VoiceAgentLatest {
   readonly router: ReturnType<typeof useRouter>;
 }
 
-function createVoiceAgentHandle(): VoiceAgentHandle {
+function createVoiceAgentHandle(initialProvider: VoiceAgentProviderId): VoiceAgentHandle {
   // The session outlives renders; the provider keeps this current.
   const latest: { current: VoiceAgentLatest | null } = { current: null };
   const current = (): VoiceAgentLatest => {
@@ -82,6 +86,11 @@ function createVoiceAgentHandle(): VoiceAgentHandle {
   };
   const listeners = new Set<() => void>();
   const audio = createWebVoiceAudio();
+  // Each provider exchanges this device's key for a short-lived credential per connection.
+  const providers: Record<VoiceAgentProviderId, VoiceAgentRealtimeProvider> = {
+    gemini: createGeminiVoiceProvider({ readApiKey: readGeminiKey }),
+    openai: createOpenAIVoiceProvider({ readApiKey: readOpenAIKey }),
+  };
   let unsubscribeThreads: (() => void) | null = null;
 
   const workspace = createVoiceAgentWorkspace({
@@ -91,12 +100,15 @@ function createVoiceAgentHandle(): VoiceAgentHandle {
     threadProjection: orchestrationEnvironment.v2.threadProjection,
     startTurn: threadEnvironment.startTurn,
     interruptTurn: threadEnvironment.interruptTurn,
+    settle: threadEnvironment.settle,
+    unsettle: threadEnvironment.unsettle,
     respondToApproval: threadEnvironment.respondToApproval,
     respondToUserInput: threadEnvironment.respondToUserInput,
     serverConfig: (environmentId) =>
       appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId)) ?? null,
     readProjectFile: (project) => readT3ProjectFile(project.environmentId, project.workspaceRoot),
     vcsStatus: vcsEnvironment.status,
+    vcsListRefs: vcsEnvironment.listRefs,
     environmentLabel: (environmentId) =>
       appAtomRegistry.get(environmentPresentations.presentationsAtom).get(environmentId)?.entry
         .target.label ?? null,
@@ -115,8 +127,9 @@ function createVoiceAgentHandle(): VoiceAgentHandle {
 
   const controller: VoiceAgentSessionController = new VoiceAgentSessionController(
     {
-      requestToken: async () => requestLiveToken(await readGeminiKey()),
+      provider: providers[initialProvider],
       instructions: VOICE_AGENT_INSTRUCTIONS,
+      language: navigator.language,
       tools: createVoiceAgentTools(workspace),
       describeContext: () => {
         const threadId = latest.current?.threadId;
@@ -126,8 +139,8 @@ function createVoiceAgentHandle(): VoiceAgentHandle {
             : readThreadShells().find((candidate) => candidate.id === threadId);
         return shell === undefined ? null : `the thread "${shell.title}" (threadId ${shell.id}).`;
       },
-      openSocket: (url, handlers) => {
-        const socket = new WebSocket(url);
+      openSocket: (url, protocols, handlers) => {
+        const socket = new WebSocket(url, protocols.length > 0 ? [...protocols] : undefined);
         socket.binaryType = "arraybuffer";
         socket.addEventListener("open", handlers.onOpen);
         socket.addEventListener("message", (event) => handlers.onMessage(event.data));
@@ -135,6 +148,8 @@ function createVoiceAgentHandle(): VoiceAgentHandle {
         return socket;
       },
       audio,
+      // Tool calls, results, transcripts and app updates, for reviewing a session in dev tools.
+      onEvent: (event) => console.debug("[voice]", event),
       onStateChange: (state) => {
         if (state.phase === "live" && unsubscribeThreads === null) {
           let snapshots = snapshotVoiceThreads(readThreadShells());
@@ -170,6 +185,9 @@ function createVoiceAgentHandle(): VoiceAgentHandle {
     setLatest: (next) => {
       latest.current = next;
     },
+    setProvider: (provider) => {
+      void controller.setProvider(providers[provider]);
+    },
     setMode: (mode) => {
       localStorage.setItem(MODE_STORAGE_KEY, mode);
       void controller.setMode(mode);
@@ -179,18 +197,25 @@ function createVoiceAgentHandle(): VoiceAgentHandle {
 
 /**
  * Owns the window's voice session above the router, so it survives navigation.
- * The key stays on this device and audio goes straight to Gemini; the tools
- * act on every connected environment through the app's own commands.
+ * The key stays on this device and audio goes straight to the chosen provider
+ * (Gemini Live or OpenAI Realtime); the tools act on every connected
+ * environment through the app's own commands.
  */
 export function VoiceAgentProvider({ children }: { readonly children: ReactNode }) {
   const enabled = useClientSettings((settings) => settings.voiceAgentEnabled);
-  const voice = useClientSettings((settings) => settings.voiceAgentVoice);
+  const provider = useClientSettings((settings) => settings.voiceAgentProvider);
+  // Each provider has its own voices, so each keeps its own choice.
+  const voice = useClientSettings((settings) =>
+    settings.voiceAgentProvider === "openai"
+      ? settings.voiceAgentOpenAIVoice
+      : settings.voiceAgentVoice,
+  );
   const pace = useClientSettings((settings) => settings.voiceAgentPace);
   const routeParams = useParams({ strict: false });
   const router = useRouter();
 
   const threadId = routeParams.threadId;
-  const [handle] = useState(createVoiceAgentHandle);
+  const [handle] = useState(() => createVoiceAgentHandle(provider));
   useEffect(() => {
     handle.setLatest({ threadId, router });
   }, [handle, threadId, router]);
@@ -198,6 +223,9 @@ export function VoiceAgentProvider({ children }: { readonly children: ReactNode 
   useEffect(() => {
     if (!enabled) handle.stop();
   }, [enabled, handle]);
+  useEffect(() => {
+    handle.setProvider(provider);
+  }, [handle, provider]);
   useEffect(() => {
     void handle.controller.setSpeech({ voice: voice === "" ? null : voice, pace });
   }, [handle, voice, pace]);

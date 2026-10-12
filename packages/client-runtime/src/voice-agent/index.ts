@@ -1,6 +1,18 @@
-export { MISSING_GEMINI_KEY_MESSAGE, requestLiveToken } from "./gemini.ts";
+export {
+  createGeminiVoiceProvider,
+  MISSING_GEMINI_KEY_MESSAGE,
+  requestLiveToken,
+  VOICE_AGENT_MODEL,
+} from "./gemini.ts";
+export {
+  createOpenAIVoiceProvider,
+  MISSING_OPENAI_KEY_MESSAGE,
+  OPENAI_REALTIME_MODEL,
+} from "./openaiRealtime.ts";
+export type { VoiceAgentProvider } from "./provider.ts";
 export {
   LIVE_OUTPUT_SAMPLE_RATE,
+  pcmLevelDbfs,
   type VoiceAgentFunctionDeclaration,
   type VoiceAgentMode,
 } from "./liveProtocol.ts";
@@ -8,7 +20,9 @@ export { voiceAgentStatus } from "./presentation.ts";
 export {
   VoiceAgentSessionController,
   type VoiceAgentAudio,
+  type VoiceAgentLogEvent,
   type VoiceAgentPhase,
+  type VoiceAgentProgress,
   type VoiceAgentSessionDependencies,
   type VoiceAgentSocket,
   type VoiceAgentSocketHandlers,
