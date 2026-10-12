@@ -7,6 +7,8 @@ import {
   type ServerConfig,
   type T3ProjectFile,
   ThreadId,
+  type VcsListRefsInput,
+  type VcsListRefsResult,
   type VcsStatusResult,
 } from "@t3tools/contracts";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
@@ -16,6 +18,8 @@ import type { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import type {
   InterruptThreadTurnInput,
+  SettleThreadInput,
+  UnsettleThreadInput,
   RespondToThreadApprovalInput,
   RespondToThreadUserInputInput,
   StartThreadTurnInput,
@@ -29,7 +33,7 @@ import {
   runAtomCommand,
   squashAtomCommandFailure,
 } from "../state/runtime.ts";
-import type { VoiceAgentWorkspace, VoiceNewThreadPlan } from "./tools.ts";
+import type { VoiceAgentWorkspace, VoiceBranch, VoiceNewThreadPlan } from "./tools.ts";
 
 type EnvironmentInput<I> = { readonly environmentId: EnvironmentId; readonly input: I };
 
@@ -43,6 +47,8 @@ export interface VoiceAgentWorkspaceSources {
   ) => Atom.Atom<AsyncResult.AsyncResult<OrchestrationV2ThreadProjection, unknown>>;
   readonly startTurn: AtomCommand<EnvironmentInput<StartThreadTurnInput>, unknown, unknown>;
   readonly interruptTurn: AtomCommand<EnvironmentInput<InterruptThreadTurnInput>, unknown, unknown>;
+  readonly settle: AtomCommand<EnvironmentInput<SettleThreadInput>, unknown, unknown>;
+  readonly unsettle: AtomCommand<EnvironmentInput<UnsettleThreadInput>, unknown, unknown>;
   readonly respondToApproval: AtomCommand<
     EnvironmentInput<RespondToThreadApprovalInput>,
     unknown,
@@ -59,6 +65,9 @@ export interface VoiceAgentWorkspaceSources {
   readonly vcsStatus: (
     target: EnvironmentInput<{ readonly cwd: string; readonly includeRemote?: boolean }>,
   ) => Atom.Atom<AsyncResult.AsyncResult<VcsStatusResult | null, unknown>>;
+  readonly vcsListRefs: (
+    target: EnvironmentInput<VcsListRefsInput>,
+  ) => Atom.Atom<AsyncResult.AsyncResult<VcsListRefsResult, unknown>>;
   readonly environmentLabel: (environmentId: EnvironmentId) => string | null;
   readonly openThread: (thread: EnvironmentThreadShell) => void;
   readonly creationSource: "web" | "mobile";
@@ -76,6 +85,9 @@ const describeFailure = (result: AtomCommandResult<unknown, unknown>, fallback: 
  * default: the agent should not act on a misheard request unchecked.
  */
 const VOICE_RUNTIME_MODE = "approval-required" as const;
+
+/** Enough for the agent to match a spoken branch name against. */
+const BRANCH_LIMIT = 100;
 
 export function createVoiceAgentWorkspace(
   sources: VoiceAgentWorkspaceSources,
@@ -123,7 +135,8 @@ export function createVoiceAgentWorkspace(
         environmentId: project.environmentId,
         input: { cwd: project.workspaceRoot, includeRemote: false },
       }),
-      { reportFailure: false },
+      // Status is a live subscription; its first value is the current snapshot.
+      { reportFailure: false, firstValue: true },
     );
     const branch = result._tag === "Success" ? (result.value?.refName ?? null) : null;
     if (branch === null) {
@@ -134,10 +147,39 @@ export function createVoiceAgentWorkspace(
     return branch;
   };
 
+  /** The checkout's local branches, the current one first. */
+  const listBranches = async (
+    project: EnvironmentProject,
+    query: string | undefined,
+  ): Promise<ReadonlyArray<VoiceBranch>> => {
+    const result = await executeAtomQuery(
+      registry,
+      sources.vcsListRefs({
+        environmentId: project.environmentId,
+        input: {
+          cwd: project.workspaceRoot,
+          refKind: "local",
+          limit: BRANCH_LIMIT,
+          ...(query ? { query } : {}),
+        },
+      }),
+      // Refs are a live subscription too; the first value is the current list.
+      { reportFailure: false, firstValue: true },
+    );
+    if (result._tag === "Failure") {
+      throw new Error(describeFailure(result, "Could not list the project's branches."));
+    }
+    return result.value.refs
+      .filter((ref) => ref.isRemote !== true)
+      .map((ref) => ({ name: ref.name, current: ref.current }))
+      .sort((left, right) => Number(right.current) - Number(left.current));
+  };
+
   /** Where and how a new thread would start, the way the app's new-task screen decides it. */
   const planNewThread = async (
     project: EnvironmentProject,
     worktree: boolean | undefined,
+    baseBranch?: string,
   ): Promise<VoiceNewThreadPlan> => {
     const config = sources.serverConfig(project.environmentId);
     const projectFile = await sources.readProjectFile(project).catch(() => null);
@@ -159,14 +201,25 @@ export function createVoiceAgentWorkspace(
     const mode =
       project.isScratch === true
         ? "local"
-        : worktree === undefined
-          ? defaultMode
-          : worktree
-            ? "worktree"
-            : "local";
+        : baseBranch !== undefined
+          ? "worktree"
+          : worktree === undefined
+            ? defaultMode
+            : worktree
+              ? "worktree"
+              : "local";
+    if (baseBranch !== undefined && mode === "worktree") {
+      // A misheard name must not become a new branch off nothing.
+      const branches = await listBranches(project, baseBranch);
+      if (!branches.some((branch) => branch.name === baseBranch)) {
+        throw new Error(
+          `There is no local branch named "${baseBranch}". Find its exact name with list_branches.`,
+        );
+      }
+    }
     return {
       mode,
-      baseBranch: mode === "worktree" ? await currentBranch(project) : null,
+      baseBranch: mode === "worktree" ? (baseBranch ?? (await currentBranch(project))) : null,
       startFromOrigin: resolved.settings.newWorktreesStartFromOrigin,
       modelSelection: modelForProject(project, resolved.settings.defaultModelSelection),
     };
@@ -191,8 +244,9 @@ export function createVoiceAgentWorkspace(
       return result.value;
     },
     planNewThread: (project) => planNewThread(project, undefined),
-    startThread: async (project, message, worktree) => {
-      const plan = await planNewThread(project, worktree);
+    listBranches,
+    startThread: async (project, message, { worktree, baseBranch }) => {
+      const plan = await planNewThread(project, worktree, baseBranch);
       const { modelSelection } = plan;
       const threadId = ThreadId.make(sources.newId());
       const title = deriveThreadTitleSeed({ text: message, attachments: [] });
@@ -271,6 +325,20 @@ export function createVoiceAgentWorkspace(
         { threadId: thread.id },
         "Could not stop the thread.",
       ),
+    setSettled: (thread, settled) =>
+      settled
+        ? run(
+            sources.settle,
+            thread.environmentId,
+            { threadId: thread.id },
+            "Could not settle the thread.",
+          )
+        : run(
+            sources.unsettle,
+            thread.environmentId,
+            { threadId: thread.id, reason: "user" },
+            "Could not reopen the thread.",
+          ),
     respondToApproval: (thread, requestId, decision) =>
       run(
         sources.respondToApproval,

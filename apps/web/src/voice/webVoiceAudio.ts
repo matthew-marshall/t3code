@@ -1,4 +1,8 @@
-import { LIVE_OUTPUT_SAMPLE_RATE, type VoiceAgentAudio } from "@t3tools/client-runtime/voice-agent";
+import {
+  LIVE_OUTPUT_SAMPLE_RATE,
+  pcmLevelDbfs,
+  type VoiceAgentAudio,
+} from "@t3tools/client-runtime/voice-agent";
 
 import captureWorkletUrl from "./pcmCaptureWorklet.ts?worker&url";
 
@@ -47,7 +51,7 @@ export function createWebVoiceAudio(): VoiceAgentAudio & {
       void ensureContext().resume();
     },
 
-    async startCapture(onChunk) {
+    async startCapture(onChunk, _onError, sampleRate) {
       const audioContext = ensureContext();
       await audioContext.resume();
       stream = await navigator.mediaDevices.getUserMedia({
@@ -60,9 +64,14 @@ export function createWebVoiceAudio(): VoiceAgentAudio & {
       });
       await audioContext.audioWorklet.addModule(captureWorkletUrl);
       const source = audioContext.createMediaStreamSource(stream);
-      captureNode = new AudioWorkletNode(audioContext, "t3-pcm-capture");
+      captureNode = new AudioWorkletNode(audioContext, "t3-pcm-capture", {
+        processorOptions: { targetRate: sampleRate },
+      });
       captureNode.port.addEventListener("message", (event: MessageEvent<ArrayBuffer>) => {
-        onChunk(bytesToBase64(new Uint8Array(event.data)));
+        onChunk(
+          bytesToBase64(new Uint8Array(event.data)),
+          pcmLevelDbfs(new Int16Array(event.data)),
+        );
       });
       captureNode.port.start();
       source.connect(captureNode);

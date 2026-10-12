@@ -1,23 +1,71 @@
-import type { VoiceAgentPace } from "@t3tools/contracts";
+// @effect-diagnostics globalTimers:off - A plain class driven by socket callbacks, outside an Effect runtime.
+import type { VoiceAgentPace, VoiceAgentProviderId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 
-import { GEMINI_LIVE_URL, VOICE_AGENT_MODEL } from "./gemini.ts";
 import {
-  type LiveFunctionCall,
-  type LiveFunctionResponse,
-  type LiveServerMessage,
+  LIVE_OUTPUT_SAMPLE_RATE,
   type VoiceAgentFunctionDeclaration,
   type VoiceAgentMode,
-  decodeLiveServerMessage,
-  liveActivityEndMessage,
-  liveActivityStartMessage,
-  liveAudioMessage,
-  liveSetupMessage,
-  liveSocketUrl,
-  liveTextMessage,
-  liveToolResponseMessage,
 } from "./liveProtocol.ts";
+import type {
+  VoiceAgentProvider,
+  VoiceProviderConnection,
+  VoiceProviderEvent,
+  VoiceToolCall,
+  VoiceToolResult,
+} from "./provider.ts";
 
 export type VoiceAgentPhase = "idle" | "connecting" | "live" | "error";
+
+/**
+ * Everything the voice agent is told and does, in order, for reviewing a conversation that went
+ * wrong: whether the model misheard, was given too little, or a tool fell short.
+ */
+export type VoiceAgentLogEvent =
+  | { readonly type: "session-start"; readonly mode: VoiceAgentMode }
+  | {
+      readonly type: "setup";
+      readonly provider: VoiceAgentProviderId;
+      readonly model: string;
+      readonly resumed: boolean;
+      readonly systemInstruction: string;
+      readonly tools: ReadonlyArray<string>;
+    }
+  | {
+      readonly type: "connection";
+      readonly status: "open" | "live" | "closed" | "go-away";
+      readonly detail?: string;
+    }
+  | { readonly type: "heard"; readonly text: string }
+  | { readonly type: "said"; readonly text: string }
+  | { readonly type: "interrupted" }
+  /** Hands-free: the microphone started sending at `level` dBFS, or paused after quiet. */
+  | { readonly type: "microphone"; readonly status: "speech"; readonly level: number }
+  | { readonly type: "microphone"; readonly status: "paused" }
+  | { readonly type: "turn-complete" }
+  | {
+      readonly type: "tool-call";
+      readonly id: string;
+      readonly name: string;
+      readonly args: Record<string, unknown>;
+    }
+  | {
+      readonly type: "tool-result";
+      readonly id: string;
+      readonly name: string;
+      readonly ms: number;
+      readonly output?: string;
+      readonly error?: string;
+    }
+  | { readonly type: "tool-cancelled"; readonly ids: ReadonlyArray<string> }
+  | { readonly type: "update"; readonly text: string }
+  /** The provider rejected one request; the session went on. */
+  | { readonly type: "provider-error"; readonly message: string }
+  | { readonly type: "error"; readonly message: string }
+  | { readonly type: "session-end" };
+
+/** The step a starting session is on, so the control can show progress instead of a spinner. */
+export type VoiceAgentProgress = "token" | "connecting" | "setup" | "microphone";
 
 export type VoiceTranscriptRole = "user" | "agent" | "tool" | "update";
 
@@ -37,6 +85,7 @@ export interface VoiceAgentState {
   readonly runningTools: ReadonlyArray<string>;
   readonly transcript: ReadonlyArray<VoiceTranscriptEntry>;
   readonly error: string | null;
+  readonly progress: VoiceAgentProgress | null;
 }
 
 /** An open WebSocket. Each platform wraps its own; message data may be text or binary. */
@@ -51,12 +100,17 @@ export interface VoiceAgentSocketHandlers {
   readonly onClose: (reason: string) => void;
 }
 
-/** Platform audio: 16 kHz PCM capture in, 24 kHz PCM playback out, both base64. */
+/** Platform audio: 16-bit mono PCM capture in at the provider's rate, 24 kHz playback out, base64. */
 export interface VoiceAgentAudio {
-  /** `onError` reports a microphone lost after capture started; the session ends with it. */
+  /**
+   * `onChunk` gets 100 ms of audio at `sampleRate` and its loudness in dBFS, measured after the
+   * platform's echo cancellation. `onError` reports a microphone lost after capture started; the
+   * session ends with it.
+   */
   startCapture(
-    onChunk: (base64Pcm: string) => void,
+    onChunk: (base64Pcm: string, levelDbfs: number) => void,
     onError: (message: string) => void,
+    sampleRate: number,
   ): Promise<void>;
   stopCapture(): Promise<void>;
   play(base64Pcm: string): void;
@@ -70,33 +124,63 @@ export interface VoiceAgentTool {
   readonly run: (args: Record<string, unknown>) => Promise<string>;
 }
 
-/** How the agent sounds. Both are fixed for a Gemini session, so changing them starts a new one. */
+/** How the agent sounds. Both are fixed for a session, so changing them starts a new one. */
 export interface VoiceAgentSpeech {
-  /** A prebuilt Gemini voice, or null for Gemini's default. */
+  /** One of the current provider's voices, or null for its default. */
   readonly voice: string | null;
   readonly pace: VoiceAgentPace;
 }
 
-const PACE_INSTRUCTIONS: Record<VoiceAgentPace, string | null> = {
-  slow: "Speak slowly and calmly.",
-  normal: null,
-  fast: "Speak quickly, at a brisk pace.",
-};
-
 export interface VoiceAgentSessionDependencies {
-  /** A single-use Gemini Live token for each connection; see `requestLiveToken`. */
-  readonly requestToken: () => Promise<string>;
+  /** The provider sessions start with; `setProvider` switches it. */
+  readonly provider: VoiceAgentProvider;
   readonly instructions: string;
+  /**
+   * The device's language as a BCP 47 tag. Gemini otherwise guesses per phrase, and a clipped
+   * phrase heard as German gets a German reply.
+   */
+  readonly language: string;
   readonly tools: ReadonlyArray<VoiceAgentTool>;
   /** What the user is looking at, added to the instructions when a connection opens. */
   readonly describeContext?: () => string | null;
-  readonly openSocket: (url: string, handlers: VoiceAgentSocketHandlers) => VoiceAgentSocket;
+  readonly openSocket: (
+    url: string,
+    protocols: ReadonlyArray<string>,
+    handlers: VoiceAgentSocketHandlers,
+  ) => VoiceAgentSocket;
   readonly audio: VoiceAgentAudio;
   readonly onStateChange: (state: VoiceAgentState) => void;
+  /** Receives every `VoiceAgentLogEvent`; the client decides where the log goes. */
+  readonly onEvent?: (event: VoiceAgentLogEvent) => void;
 }
 
 const TRANSCRIPT_LIMIT = 40;
 const MAX_RECONNECTS = 3;
+/** Covers the player's preroll and any pause while it buffers, beyond the speech itself. */
+const PLAYBACK_MARGIN_MS = 500;
+/** A tool still running after this is reported as unknown, so the agent never waits on it forever. */
+const TOOL_TIMEOUT_MS = 30_000;
+/** An update waits at most this long for a quiet moment, in case a turn never reports done. */
+const UPDATE_MAX_WAIT_MS = 20_000;
+
+/**
+ * Hands-free sends the microphone only around speech. A chunk at least this loud counts as speech;
+ * quieter is background left after the platform's noise suppression.
+ */
+const SPEECH_DBFS = -42;
+/** Sent ahead of the chunk that crossed the threshold, so the start of a word is not clipped. */
+const PRE_ROLL_CHUNKS = 5;
+/** Quiet this long pauses sending; the provider still gets the silence it needs to end the turn. */
+const PAUSE_AFTER_QUIET_CHUNKS = 15;
+
+const nowMs = () => DateTime.toEpochMillis(DateTime.nowUnsafe());
+
+/** How long base64 16-bit mono speech at the output rate plays for. */
+function speechMs(base64Pcm: string): number {
+  const padding = base64Pcm.endsWith("==") ? 2 : base64Pcm.endsWith("=") ? 1 : 0;
+  const bytes = (base64Pcm.length * 3) / 4 - padding;
+  return (bytes / 2 / LIVE_OUTPUT_SAMPLE_RATE) * 1000;
+}
 
 const initialVoiceAgentState = (mode: VoiceAgentMode): VoiceAgentState => ({
   phase: "idle",
@@ -106,6 +190,7 @@ const initialVoiceAgentState = (mode: VoiceAgentMode): VoiceAgentState => ({
   runningTools: [],
   transcript: [],
   error: null,
+  progress: null,
 });
 
 const RECAP_ENTRIES = 12;
@@ -129,15 +214,17 @@ const describeError = (error: unknown): string =>
   error instanceof Error && error.message.length > 0 ? error.message : "Voice session failed.";
 
 /**
- * One live voice conversation with Gemini. The client holds the key, the
- * socket, the audio and the tools; nothing goes through a T3 environment
+ * One live voice conversation with a realtime voice API (see `VoiceAgentProvider`). The client
+ * holds the key, the socket, the audio and the tools; nothing goes through a T3 environment
  * except the actions the tools take.
- * Connections are replaced transparently (Live closes them every ~10 minutes)
- * using the resumption handle the server keeps sending.
+ * Connections are replaced transparently when the provider ends one, resuming the conversation
+ * when the provider offers that and otherwise telling the new one what was said.
  */
 export class VoiceAgentSessionController {
   private state: VoiceAgentState;
+  private provider: VoiceAgentProvider;
   private socket: VoiceAgentSocket | null = null;
+  private connection: VoiceProviderConnection | null = null;
   private resumptionHandle: string | null = null;
   private reconnects = 0;
   private capturing = false;
@@ -147,9 +234,25 @@ export class VoiceAgentSessionController {
   private readonly cancelledCalls = new Set<string>();
   private readonly deps: VoiceAgentSessionDependencies;
   private speech: VoiceAgentSpeech = { voice: null, pace: "normal" };
+  private pendingRestart: Promise<void> | null = null;
+  /**
+   * Text sent to Live counts as the user speaking and cuts off a reply, so updates wait until
+   * no turn is underway: from the user speaking or a tool call until the agent's turn completes.
+   */
+  private turnUnderway = false;
+  /** When the speech handed to the player should have finished playing. */
+  private speechEndsAt = 0;
+  private queuedUpdates: Array<string> = [];
+  private updateTimer: ReturnType<typeof setTimeout> | null = null;
+  private updateDeadline: ReturnType<typeof setTimeout> | null = null;
+  /** Hands-free: whether the microphone is being sent, and what was held back while it is not. */
+  private sendingSpeech = false;
+  private preRoll: Array<string> = [];
+  private quietChunks = 0;
 
   constructor(deps: VoiceAgentSessionDependencies, mode: VoiceAgentMode) {
     this.deps = deps;
+    this.provider = deps.provider;
     this.state = initialVoiceAgentState(mode);
   }
 
@@ -164,14 +267,23 @@ export class VoiceAgentSessionController {
     this.resumptionHandle = null;
     this.reconnects = 0;
     this.update({ phase: "connecting", error: null, transcript: [] });
+    this.log({ type: "session-start", mode: this.state.mode });
     await this.connect();
   }
 
   async stop(): Promise<void> {
+    if (this.state.phase !== "idle") this.log({ type: "session-end" });
     this.generation += 1;
     this.closeSocket();
     this.resumptionHandle = null;
-    this.update({ phase: "idle", talking: false, agentSpeaking: false, runningTools: [] });
+    this.dropQueuedUpdates();
+    this.update({
+      phase: "idle",
+      talking: false,
+      agentSpeaking: false,
+      runningTools: [],
+      progress: null,
+    });
     this.deps.audio.clearPlayback();
     await this.stopCapture();
   }
@@ -192,16 +304,35 @@ export class VoiceAgentSessionController {
     await this.restartFresh();
   }
 
-  /**
-   * Mode, voice and pace need a new Gemini session: a resumed one keeps the
-   * setup it was created with. The recent transcript goes into the new
-   * session's instructions instead.
-   */
-  private async restartFresh(): Promise<void> {
-    if (this.state.phase === "live" || this.state.phase === "connecting") {
-      this.resumptionHandle = null;
-      await this.reconnect();
+  /** Switches provider; a live conversation continues on a fresh session with the new one. */
+  async setProvider(provider: VoiceAgentProvider): Promise<void> {
+    if (provider.id === this.provider.id) {
+      return;
     }
+    const rateChanged = provider.inputSampleRate !== this.provider.inputSampleRate;
+    this.provider = provider;
+    // The microphone restarts at the new provider's rate once the new session is ready.
+    if (rateChanged) await this.stopCapture();
+    await this.restartFresh();
+  }
+
+  /**
+   * Provider, mode, voice and pace need a new session: a resumed one keeps the setup it was
+   * created with. The recent transcript goes into the new session's instructions instead.
+   */
+  private restartFresh(): Promise<void> {
+    if (this.state.phase !== "live" && this.state.phase !== "connecting") {
+      return Promise.resolve();
+    }
+    // Settings that change together, such as a provider and its voice, restart once.
+    this.pendingRestart ??= Promise.resolve().then(async () => {
+      this.pendingRestart = null;
+      if (this.state.phase === "live" || this.state.phase === "connecting") {
+        this.resumptionHandle = null;
+        await this.reconnect();
+      }
+    });
+    return this.pendingRestart;
   }
 
   /** Push-to-talk pressed: interrupt any speech and open a user turn. */
@@ -210,7 +341,7 @@ export class VoiceAgentSessionController {
       return;
     }
     this.deps.audio.clearPlayback();
-    this.send(liveActivityStartMessage);
+    this.connection?.beginTalking();
     this.update({ talking: true, agentSpeaking: false });
   }
 
@@ -219,24 +350,65 @@ export class VoiceAgentSessionController {
     if (!this.state.talking) {
       return;
     }
-    this.send(liveActivityEndMessage);
+    this.connection?.endTalking();
+    this.turnUnderway = true;
     this.update({ talking: false });
   }
 
-  /** Tells the agent about something that happened in the app, such as a thread finishing. */
+  /**
+   * Tells the agent about something that happened in the app, such as a thread finishing. Held
+   * until the agent is quiet, so an update never cuts off what it is saying.
+   */
   sendUpdate(text: string): void {
     if (this.state.phase !== "live") {
       return;
     }
-    this.send(liveTextMessage(`[T3 update] ${text}`));
-    this.appendTranscript("update", text);
+    this.queuedUpdates.push(text);
+    this.updateDeadline ??= setTimeout(() => this.deliverUpdates(), UPDATE_MAX_WAIT_MS);
+    this.deliverUpdatesWhenQuiet();
+  }
+
+  private deliverUpdatesWhenQuiet(): void {
+    if (this.updateTimer !== null) clearTimeout(this.updateTimer);
+    this.updateTimer = null;
+    if (this.queuedUpdates.length === 0) return;
+    // Each of these ends with a call back here: the turn completing, `endTalking`, or the tools.
+    if (this.turnUnderway || this.state.talking || this.state.runningTools.length > 0) return;
+    const playing = this.speechEndsAt - nowMs();
+    if (playing > 0) {
+      this.updateTimer = setTimeout(() => this.deliverUpdatesWhenQuiet(), playing);
+      return;
+    }
+    this.deliverUpdates();
+  }
+
+  private deliverUpdates(): void {
+    const updates = this.queuedUpdates;
+    this.dropQueuedUpdates();
+    if (this.state.phase !== "live" || updates.length === 0) return;
+    this.connection?.sendText(updates.map((text) => `[T3 update] ${text}`).join("\n"));
+    for (const text of updates) {
+      this.log({ type: "update", text });
+      this.appendTranscript("update", text);
+    }
+  }
+
+  private dropQueuedUpdates(): void {
+    this.queuedUpdates = [];
+    if (this.updateTimer !== null) clearTimeout(this.updateTimer);
+    if (this.updateDeadline !== null) clearTimeout(this.updateDeadline);
+    this.updateTimer = null;
+    this.updateDeadline = null;
   }
 
   private async connect(): Promise<void> {
     const generation = ++this.generation;
-    let token: string;
+    this.update({ progress: "token" });
+    let connection: VoiceProviderConnection;
     try {
-      token = await this.deps.requestToken();
+      connection = await this.provider.connect((message) => {
+        if (generation === this.generation) this.send(message);
+      });
     } catch (error) {
       if (generation === this.generation) {
         this.fail(describeError(error));
@@ -246,21 +418,26 @@ export class VoiceAgentSessionController {
     if (generation !== this.generation) {
       return;
     }
+    this.connection = connection;
+    this.update({ progress: "connecting" });
     // Every handler checks the generation: a replaced connection's late events are ignored.
-    this.socket = this.deps.openSocket(liveSocketUrl(GEMINI_LIVE_URL, token), {
+    this.socket = this.deps.openSocket(connection.url, connection.protocols, {
       onOpen: () => {
         if (generation !== this.generation) return;
-        this.send(this.setupMessage());
+        this.update({ progress: "setup" });
+        this.log({ type: "connection", status: "open" });
+        connection.setup(this.sessionSetup());
       },
       onMessage: (data) => {
         if (generation !== this.generation) return;
-        const message = decodeLiveServerMessage(data);
-        if (message !== null) {
-          this.handleMessage(message);
+        for (const event of connection.receive(data)) {
+          if (generation !== this.generation) return;
+          this.handleEvent(event);
         }
       },
       onClose: (reason) => {
         if (generation !== this.generation) return;
+        this.log({ type: "connection", status: "closed", detail: reason });
         this.socket = null;
         const active = this.state.phase === "live" || this.state.phase === "connecting";
         if (active && this.reconnects < MAX_RECONNECTS) {
@@ -281,72 +458,114 @@ export class VoiceAgentSessionController {
     await this.connect();
   }
 
-  private setupMessage() {
+  private sessionSetup() {
     const context = this.deps.describeContext?.() ?? null;
     // A resumed session remembers the conversation; a fresh one mid-conversation is told it.
     const recap = this.resumptionHandle === null ? transcriptRecap(this.state.transcript) : null;
     const systemInstruction = [
       this.deps.instructions,
-      PACE_INSTRUCTIONS[this.speech.pace],
+      this.provider.instructions,
+      `The user speaks the language with the tag "${this.deps.language}". Always reply in it, and understand everything they say as that language: a phrase that sounds like another language was misheard.`,
       context === null ? null : `Currently on screen: ${context}`,
       recap === null ? null : `The conversation so far:\n${recap}`,
     ]
       .filter((part) => part !== null)
       .join("\n\n");
-    return liveSetupMessage({
-      model: VOICE_AGENT_MODEL,
+    this.log({
+      type: "setup",
+      provider: this.provider.id,
+      model: this.provider.model,
+      resumed: this.resumptionHandle !== null,
       systemInstruction,
+      tools: this.deps.tools.map((tool) => tool.declaration.name),
+    });
+    return {
+      instructions: systemInstruction,
       tools: this.deps.tools.map((tool) => tool.declaration),
       mode: this.state.mode,
       voice: this.speech.voice,
+      pace: this.speech.pace,
+      language: this.deps.language,
       resumptionHandle: this.resumptionHandle,
-    });
+    };
   }
 
-  private handleMessage(message: LiveServerMessage): void {
-    if (message.setupComplete !== undefined) {
-      this.reconnects = 0;
-      this.update({ phase: "live", error: null });
-      void this.startCapture();
-    }
-    if (message.sessionResumptionUpdate?.resumable && message.sessionResumptionUpdate.newHandle) {
-      this.resumptionHandle = message.sessionResumptionUpdate.newHandle;
-    }
-    const content = message.serverContent;
-    if (content !== undefined) {
-      if (content.interrupted) {
+  private handleEvent(event: VoiceProviderEvent): void {
+    switch (event.type) {
+      case "ready":
+        this.sessionReady();
+        return;
+      case "resumable":
+        this.resumptionHandle = event.handle;
+        return;
+      case "interrupted":
+        // The user is talking, and the agent will answer.
+        this.turnUnderway = true;
+        if (!this.state.agentSpeaking && this.speechEndsAt <= nowMs()) return;
+        this.log({ type: "interrupted" });
         this.deps.audio.clearPlayback();
+        this.speechEndsAt = 0;
         this.update({ agentSpeaking: false });
-      }
-      for (const part of content.modelTurn?.parts ?? []) {
-        if (part.inlineData?.data) {
-          this.deps.audio.play(part.inlineData.data);
-          if (!this.state.agentSpeaking) this.update({ agentSpeaking: true });
-        }
-      }
-      if (content.inputTranscription?.text) {
-        this.appendTranscript("user", content.inputTranscription.text);
-      }
-      if (content.outputTranscription?.text) {
-        this.appendTranscript("agent", content.outputTranscription.text);
-      }
-      if (content.turnComplete) {
+        return;
+      case "audio":
+        this.turnUnderway = true;
+        this.deps.audio.play(event.data);
+        this.speechEndsAt =
+          Math.max(this.speechEndsAt, nowMs() + PLAYBACK_MARGIN_MS) + speechMs(event.data);
+        if (!this.state.agentSpeaking) this.update({ agentSpeaking: true });
+        return;
+      case "heard":
+        this.turnUnderway = true;
+        this.log({ type: "heard", text: event.text });
+        this.appendTranscript("user", event.text);
+        return;
+      case "said":
+        this.log({ type: "said", text: event.text });
+        this.appendTranscript("agent", event.text);
+        return;
+      case "turn-complete":
+        this.log({ type: "turn-complete" });
+        this.turnUnderway = false;
         this.update({ agentSpeaking: false });
-      }
-    }
-    for (const id of message.toolCallCancellation?.ids ?? []) {
-      this.cancelledCalls.add(id);
-    }
-    const calls = message.toolCall?.functionCalls ?? [];
-    if (calls.length > 0) {
-      void this.runToolCalls(calls);
-    }
-    if (message.goAway !== undefined && this.resumptionHandle !== null) {
-      void this.reconnect();
+        this.deliverUpdatesWhenQuiet();
+        return;
+      case "tool-cancelled":
+        this.log({ type: "tool-cancelled", ids: event.ids });
+        for (const id of event.ids) this.cancelledCalls.add(id);
+        return;
+      case "tool-calls":
+        this.turnUnderway = true;
+        void this.runToolCalls(event.calls);
+        return;
+      case "go-away":
+        this.log({ type: "connection", status: "go-away" });
+        if (this.resumptionHandle !== null) void this.reconnect();
+        return;
+      case "error":
+        this.log({ type: "provider-error", message: event.message });
+        return;
     }
   }
 
-  private async runToolCalls(calls: ReadonlyArray<LiveFunctionCall>): Promise<void> {
+  private sessionReady(): void {
+    this.reconnects = 0;
+    this.log({ type: "connection", status: "live" });
+    this.turnUnderway = false;
+    this.speechEndsAt = 0;
+    this.sendingSpeech = false;
+    this.preRoll = [];
+    this.quietChunks = 0;
+    this.update({
+      phase: "live",
+      error: null,
+      progress: this.capturing ? null : "microphone",
+    });
+    void this.startCapture();
+    // Updates that came in while reconnecting.
+    this.deliverUpdatesWhenQuiet();
+  }
+
+  private async runToolCalls(calls: ReadonlyArray<VoiceToolCall>): Promise<void> {
     const generation = this.generation;
     this.update({ runningTools: [...this.state.runningTools, ...calls.map((call) => call.name)] });
     const responses = await Promise.all(calls.map((call) => this.runToolCall(call)));
@@ -361,24 +580,54 @@ export class VoiceAgentSessionController {
     this.update({ runningTools: remaining });
     const answered = responses.filter((response) => !this.cancelledCalls.delete(response.id));
     if (answered.length > 0) {
-      this.send(liveToolResponseMessage(answered));
+      this.connection?.sendToolResults(answered);
+      // The agent answers with what the tools returned.
+      this.turnUnderway = true;
     }
+    this.deliverUpdatesWhenQuiet();
   }
 
-  private async runToolCall(call: LiveFunctionCall): Promise<LiveFunctionResponse> {
+  private async runToolCall(call: VoiceToolCall): Promise<VoiceToolResult> {
+    this.log({ type: "tool-call", id: call.id, name: call.name, args: call.args });
+    const startedAt = nowMs();
+    const result = await this.callTool(call);
+    this.log({
+      type: "tool-result",
+      id: call.id,
+      name: call.name,
+      ms: nowMs() - startedAt,
+      ...("output" in result ? { output: result.output } : { error: result.error }),
+    });
+    return result;
+  }
+
+  private async callTool(call: VoiceToolCall): Promise<VoiceToolResult> {
     this.appendTranscript("tool", call.name);
     const tool = this.deps.tools.find((candidate) => candidate.declaration.name === call.name);
     try {
       if (tool === undefined) {
         throw new Error(`There is no tool named ${call.name}.`);
       }
-      return {
-        id: call.id,
-        name: call.name,
-        response: { output: await tool.run(call.args ?? {}) },
-      };
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timedOut = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                `${call.name} has not finished after ${TOOL_TIMEOUT_MS / 1000} seconds, so whether it worked is unknown.`,
+              ),
+            ),
+          TOOL_TIMEOUT_MS,
+        );
+      });
+      try {
+        const output = await Promise.race([tool.run(call.args), timedOut]);
+        return { id: call.id, name: call.name, output };
+      } finally {
+        clearTimeout(timer);
+      }
     } catch (error) {
-      return { id: call.id, name: call.name, response: { error: describeError(error) } };
+      return { id: call.id, name: call.name, error: describeError(error) };
     }
   }
 
@@ -389,17 +638,43 @@ export class VoiceAgentSessionController {
     this.capturing = true;
     try {
       await this.deps.audio.startCapture(
-        (chunk) => {
-          if (this.state.phase !== "live") return;
-          if (this.state.mode === "push-to-talk" && !this.state.talking) return;
-          this.send(liveAudioMessage(chunk));
-        },
+        (chunk, level) => this.captured(chunk, level),
         (message) => {
           if (this.capturing) this.captureFailed(message);
         },
+        this.provider.inputSampleRate,
       );
+      if (this.state.progress === "microphone") this.update({ progress: null });
     } catch (error) {
       this.captureFailed(describeError(error));
+    }
+  }
+
+  private captured(chunk: string, level: number): void {
+    if (this.state.phase !== "live") return;
+    if (this.state.mode === "push-to-talk") {
+      if (this.state.talking) this.connection?.sendAudio(chunk);
+      return;
+    }
+    const loud = level >= SPEECH_DBFS;
+    if (!this.sendingSpeech) {
+      if (!loud) {
+        this.preRoll.push(chunk);
+        if (this.preRoll.length > PRE_ROLL_CHUNKS) this.preRoll.shift();
+        return;
+      }
+      this.sendingSpeech = true;
+      this.log({ type: "microphone", status: "speech", level: Math.round(level) });
+      for (const held of this.preRoll) this.connection?.sendAudio(held);
+      this.preRoll = [];
+    }
+    this.connection?.sendAudio(chunk);
+    this.quietChunks = loud ? 0 : this.quietChunks + 1;
+    if (this.quietChunks >= PAUSE_AFTER_QUIET_CHUNKS) {
+      this.sendingSpeech = false;
+      this.quietChunks = 0;
+      this.connection?.pauseAudio();
+      this.log({ type: "microphone", status: "paused" });
     }
   }
 
@@ -425,15 +700,19 @@ export class VoiceAgentSessionController {
   private closeSocket(): void {
     this.socket?.close();
     this.socket = null;
+    this.connection = null;
   }
 
   private fail(error: string): void {
+    this.log({ type: "error", message: error });
+    this.dropQueuedUpdates();
     this.update({
       phase: "error",
       error,
       talking: false,
       agentSpeaking: false,
       runningTools: [],
+      progress: null,
     });
     this.deps.audio.clearPlayback();
     void this.stopCapture();
@@ -449,6 +728,14 @@ export class VoiceAgentSessionController {
       transcript.push({ id: this.nextTranscriptId++, role, text: text.trimStart() });
     }
     this.update({ transcript: transcript.slice(-TRANSCRIPT_LIMIT) });
+  }
+
+  private log(event: VoiceAgentLogEvent): void {
+    try {
+      this.deps.onEvent?.(event);
+    } catch {
+      // A broken log must never break the conversation.
+    }
   }
 
   private update(patch: Partial<VoiceAgentState>): void {

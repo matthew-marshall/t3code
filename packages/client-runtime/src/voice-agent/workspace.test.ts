@@ -50,14 +50,37 @@ function setup(options: {
     threadProjection: () => Atom.make(AsyncResult.initial()) as never,
     startTurn,
     interruptTurn: unused,
+    settle: unused,
+    unsettle: unused,
     respondToApproval: unused,
     respondToUserInput: unused,
     serverConfig: () => ({ settings }) as unknown as ServerConfig,
     readProjectFile: async () => options.projectFile ?? null,
+    // Waiting, like the live status subscription, which stays open after its first snapshot.
     vcsStatus: () =>
       Atom.make(
         AsyncResult.success(
           options.branch === null ? null : ({ refName: options.branch ?? "main" } as never),
+          { waiting: true },
+        ),
+      ),
+    vcsListRefs: () =>
+      Atom.make(
+        AsyncResult.success(
+          {
+            refs: [
+              { name: "main", current: true, isDefault: true, worktreePath: null },
+              { name: "watchfree-imui", current: false, isDefault: false, worktreePath: null },
+              {
+                name: "origin/watchfree-imui",
+                isRemote: true,
+                current: false,
+                isDefault: false,
+                worktreePath: null,
+              },
+            ],
+          } as never,
+          { waiting: true },
         ),
       ),
     environmentLabel: () => null,
@@ -71,7 +94,7 @@ function setup(options: {
 describe("createVoiceAgentWorkspace", () => {
   it("starts a thread in a new worktree off the checkout's branch when the project defaults to one", async () => {
     const { workspace, sent } = setup({ envMode: "worktree", branch: "main" });
-    const { plan } = await workspace.startThread(project, "Add dark mode", undefined);
+    const { plan } = await workspace.startThread(project, "Add dark mode", {});
 
     expect(plan).toMatchObject({ mode: "worktree", baseBranch: "main" });
     expect(sent[0]!.runtimeMode).toBe("approval-required");
@@ -85,13 +108,29 @@ describe("createVoiceAgentWorkspace", () => {
 
   it("lets the user's choice override the project default either way", async () => {
     const local = setup({ envMode: "worktree" });
-    await local.workspace.startThread(project, "Fix the footer", false);
+    await local.workspace.startThread(project, "Fix the footer", { worktree: false });
     expect(local.sent[0]!.bootstrap!.prepareWorktree).toBeUndefined();
     expect(local.sent[0]!.bootstrap!.createThread).toMatchObject({ branch: null });
 
     const worktree = setup({ envMode: "local", branch: "release" });
-    await worktree.workspace.startThread(project, "Hotfix", true);
+    await worktree.workspace.startThread(project, "Hotfix", { worktree: true });
     expect(worktree.sent[0]!.bootstrap!.prepareWorktree).toMatchObject({ baseBranch: "release" });
+  });
+
+  it("starts a worktree off a named branch only when that branch exists", async () => {
+    const { workspace, sent } = setup({ envMode: "local", branch: "main" });
+    await expect(workspace.listBranches(project, undefined)).resolves.toEqual([
+      { name: "main", current: true },
+      { name: "watchfree-imui", current: false },
+    ]);
+
+    await workspace.startThread(project, "Port the player", { baseBranch: "watchfree-imui" });
+    expect(sent[0]!.bootstrap!.prepareWorktree).toMatchObject({ baseBranch: "watchfree-imui" });
+
+    await expect(
+      workspace.startThread(project, "Port the player", { baseBranch: "watch-free-cpp" }),
+    ).rejects.toThrow('no local branch named "watch-free-cpp"');
+    expect(sent).toHaveLength(1);
   });
 
   it("follows a t3.json default when the environment sets none", async () => {
@@ -103,7 +142,7 @@ describe("createVoiceAgentWorkspace", () => {
 
   it("refuses a worktree when the checkout is not on a branch", async () => {
     const { workspace, sent } = setup({ branch: null });
-    await expect(workspace.startThread(project, "Anything", true)).rejects.toThrow(
+    await expect(workspace.startThread(project, "Anything", { worktree: true })).rejects.toThrow(
       "not on a branch",
     );
     expect(sent).toEqual([]);

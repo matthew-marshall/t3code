@@ -5,7 +5,7 @@ import {
 } from "@t3tools/client-runtime/voice-input";
 import { type RefObject, useEffect, useRef, useState } from "react";
 
-import { readGeminiKey } from "./geminiKey";
+import { readGeminiKey } from "./voiceAgentKeys";
 import { createWebVoiceRecorder } from "./webVoiceRecorder";
 
 type Selection = { readonly start: number; readonly end: number };

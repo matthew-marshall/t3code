@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { GEMINI_LIVE_URL } from "./gemini.ts";
+import { createGeminiVoiceProvider, GEMINI_LIVE_URL } from "./gemini.ts";
+import { voiceAgentStatus } from "./presentation.ts";
 import type { VoiceAgentMode } from "./liveProtocol.ts";
 import {
   VoiceAgentSessionController,
   type VoiceAgentSocket,
   type VoiceAgentSocketHandlers,
+  type VoiceAgentLogEvent,
   type VoiceAgentState,
 } from "./session.ts";
 
@@ -47,9 +49,11 @@ const flush = async () => {
 function harness(mode: VoiceAgentMode = "hands-free") {
   const sockets: Array<FakeSocket> = [];
   const states: Array<VoiceAgentState> = [];
+  const events: Array<VoiceAgentLogEvent> = [];
   const toolCalls: Array<Record<string, unknown>> = [];
+  let listThreadsHangs = false;
   let tokens = 0;
-  let onChunk: ((chunk: string) => void) | null = null;
+  let onChunk: ((chunk: string, level: number) => void) | null = null;
   let onCaptureError: ((message: string) => void) | null = null;
   const audio = {
     startCapture: vi.fn(
@@ -67,13 +71,19 @@ function harness(mode: VoiceAgentMode = "hands-free") {
   };
   const controller = new VoiceAgentSessionController(
     {
-      requestToken: async () => `token-${++tokens}`,
+      provider: createGeminiVoiceProvider({
+        readApiKey: async () => "key",
+        fetchImpl: (async () =>
+          new Response(JSON.stringify({ name: `token-${++tokens}` }))) as unknown as typeof fetch,
+      }),
       instructions: "Be brief.",
+      language: "en-US",
       tools: [
         {
           declaration: { name: "list_threads", description: "List", parametersJsonSchema: {} },
           run: async (args) => {
             toolCalls.push(args);
+            if (listThreadsHangs) await new Promise(() => {});
             return '{"threads":[]}';
           },
         },
@@ -83,13 +93,14 @@ function harness(mode: VoiceAgentMode = "hands-free") {
         },
       ],
       describeContext: () => "Thread: Fix login",
-      openSocket: (url, handlers) => {
+      openSocket: (url, _protocols, handlers) => {
         const socket = new FakeSocket(url, handlers);
         sockets.push(socket);
         return socket;
       },
       audio,
       onStateChange: (state) => states.push(state),
+      onEvent: (event) => events.push(event),
     },
     mode,
   );
@@ -104,10 +115,15 @@ function harness(mode: VoiceAgentMode = "hands-free") {
     controller,
     sockets,
     states,
+    events,
     toolCalls,
+    hangListThreads: () => {
+      listThreadsHangs = true;
+    },
     audio,
     connect,
-    speak: (chunk: string) => onChunk?.(chunk),
+    // Speech is well above the hands-free threshold unless a test says otherwise.
+    speak: (chunk: string, level = -20) => onChunk?.(chunk, level),
     loseMicrophone: (message: string) => onCaptureError?.(message),
   };
 }
@@ -125,13 +141,74 @@ describe("VoiceAgentSessionController", () => {
       "list_threads",
       "open_thread",
     ]);
+    expect(setup!.setup.tools[1]).toEqual({ googleSearch: {} });
     expect(setup!.setup.systemInstruction.parts[0].text).toContain("Be brief.");
     expect(setup!.setup.systemInstruction.parts[0].text).toContain("Thread: Fix login");
+    expect(setup!.setup.systemInstruction.parts[0].text).toContain('"en-US". Always reply in it');
     expect(setup!.setup.realtimeInputConfig.automaticActivityDetection.disabled).toBe(false);
     expect(h.controller.getState().phase).toBe("live");
 
     h.speak("pcm");
     expect(socket.sentOf("realtimeInput").at(-1)!.realtimeInput.audio.data).toBe("pcm");
+  });
+
+  it("reports each step of starting, so the control can show progress", async () => {
+    const h = harness();
+    await h.controller.start();
+    expect(h.controller.getState()).toMatchObject({ phase: "connecting", progress: "connecting" });
+    await h.connect();
+
+    const steps = h.states
+      .map((state) => `${state.phase}:${state.progress}`)
+      .filter((step, index, all) => step !== all[index - 1]);
+    expect(steps).toEqual([
+      "connecting:null",
+      "connecting:token",
+      "connecting:connecting",
+      "connecting:setup",
+      "live:microphone",
+      "live:null",
+    ]);
+    expect(voiceAgentStatus(h.controller.getState())).toBe("Listening");
+  });
+
+  it("logs what the agent was told, heard, called and got back", async () => {
+    const h = harness();
+    await h.controller.start();
+    const socket = await h.connect();
+    socket.receive({ serverContent: { inputTranscription: { text: "list my threads" } } });
+    socket.receive({
+      toolCall: { functionCalls: [{ id: "a", name: "list_threads", args: { query: "login" } }] },
+    });
+    await flush();
+    socket.receive({ serverContent: { turnComplete: true } });
+    h.controller.sendUpdate("Fix login finished.");
+    await h.controller.stop();
+
+    const types = h.events.map((event) => event.type);
+    expect(types).toEqual([
+      "session-start",
+      "connection",
+      "setup",
+      "connection",
+      "heard",
+      "tool-call",
+      "tool-result",
+      "turn-complete",
+      "update",
+      "session-end",
+    ]);
+    expect(h.events.find((event) => event.type === "setup")).toMatchObject({
+      systemInstruction: expect.stringContaining("Be brief."),
+      tools: ["list_threads", "open_thread"],
+    });
+    expect(h.events.find((event) => event.type === "tool-call")).toMatchObject({
+      name: "list_threads",
+      args: { query: "login" },
+    });
+    expect(h.events.find((event) => event.type === "tool-result")).toMatchObject({
+      output: '{"threads":[]}',
+    });
   });
 
   it("answers tool calls, and reports an unknown tool as an error", async () => {
@@ -161,6 +238,26 @@ describe("VoiceAgentSessionController", () => {
       },
     ]);
     expect(h.controller.getState().runningTools).toEqual([]);
+  });
+
+  it("reports a tool that never finishes as unknown instead of leaving the agent waiting", async () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness();
+      h.hangListThreads();
+      await h.controller.start();
+      const socket = await h.connect();
+      socket.receive({ toolCall: { functionCalls: [{ id: "a", name: "list_threads" }] } });
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      const [response] = socket.sentOf("toolResponse");
+      expect(response!.toolResponse.functionResponses[0].response.error).toContain(
+        "whether it worked is unknown",
+      );
+      expect(h.controller.getState().runningTools).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not answer a tool call the server cancelled", async () => {
@@ -211,6 +308,75 @@ describe("VoiceAgentSessionController", () => {
     socket.receive({ serverContent: { interrupted: true } });
     expect(h.audio.clearPlayback).toHaveBeenCalled();
     expect(h.controller.getState().agentSpeaking).toBe(false);
+  });
+
+  it("hands-free, sends the microphone only around speech, starting just before it", async () => {
+    const h = harness();
+    await h.controller.start();
+    const socket = await h.connect();
+    const sent = () => socket.sentOf("realtimeInput").map((message) => message.realtimeInput);
+
+    for (let index = 1; index <= 7; index += 1) h.speak(`quiet-${index}`, -60);
+    expect(sent()).toEqual([]);
+
+    h.speak("hello", -25);
+    // The half second before speech goes first, so the start of the word is not clipped.
+    expect(sent().map((input) => input.audio.data)).toEqual([
+      "quiet-3",
+      "quiet-4",
+      "quiet-5",
+      "quiet-6",
+      "quiet-7",
+      "hello",
+    ]);
+
+    // Pauses inside speech keep sending; a second and a half of quiet ends it.
+    for (let index = 0; index < 14; index += 1) h.speak("pause", -60);
+    expect(sent().at(-1)).toMatchObject({ audio: { data: "pause" } });
+    h.speak("pause", -60);
+    expect(sent().at(-1)).toEqual({ audioStreamEnd: true });
+    h.speak("after", -60);
+    expect(sent()).toHaveLength(6 + 15 + 1);
+    expect(h.events.filter((event) => event.type === "microphone")).toEqual([
+      { type: "microphone", status: "speech", level: -25 },
+      { type: "microphone", status: "paused" },
+    ]);
+  });
+
+  it("holds app updates until the agent has finished speaking, so they never cut it off", async () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness();
+      await h.controller.start();
+      const socket = await h.connect();
+      const updates = () =>
+        socket.sentOf("realtimeInput").filter((message) => "text" in message.realtimeInput);
+      // One second of 24 kHz 16-bit speech.
+      const second = "A".repeat(64_000);
+
+      socket.receive({
+        serverContent: { modelTurn: { parts: [{ inlineData: { data: second } }] } },
+      });
+      h.controller.sendUpdate("Fix login finished.");
+      h.controller.sendUpdate("Billing needs approval.");
+      socket.receive({ serverContent: { turnComplete: true } });
+      // The turn is done, but its speech is still playing.
+      expect(updates()).toEqual([]);
+
+      vi.advanceTimersByTime(1_600);
+      expect(updates().map((message) => message.realtimeInput.text)).toEqual([
+        "[T3 update] Fix login finished.\n[T3 update] Billing needs approval.",
+      ]);
+
+      // A turn that never reports done still lets the update through eventually.
+      socket.receive({ serverContent: { inputTranscription: { text: "hmm" } } });
+      h.controller.sendUpdate("Docs finished.");
+      expect(updates()).toHaveLength(1);
+      vi.advanceTimersByTime(20_000);
+      expect(updates().at(-1)!.realtimeInput.text).toBe("[T3 update] Docs finished.");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("joins transcription fragments per speaker", async () => {
@@ -291,6 +457,22 @@ describe("VoiceAgentSessionController", () => {
     expect(next.systemInstruction.parts[0].text).not.toContain("Speak quickly");
   });
 
+  it("restarts once when several settings change together", async () => {
+    const h = harness();
+    await h.controller.start();
+    await h.connect();
+    await Promise.all([
+      h.controller.setProvider(
+        createGeminiVoiceProvider({ readApiKey: async () => "key" }) as never,
+      ),
+      h.controller.setSpeech({ voice: "Puck", pace: "normal" }),
+      h.controller.setMode("push-to-talk"),
+    ]);
+    await flush();
+    // The provider id did not change, so only voice and mode asked for a restart: one socket.
+    expect(h.sockets).toHaveLength(2);
+  });
+
   it("ends the session when the microphone is lost mid-conversation", async () => {
     const h = harness();
     await h.controller.start();
@@ -315,10 +497,9 @@ describe("VoiceAgentSessionController", () => {
 
     const failing = new VoiceAgentSessionController(
       {
-        requestToken: async () => {
-          throw new Error("Add a Gemini API key in Settings → Voice agent.");
-        },
+        provider: createGeminiVoiceProvider({ readApiKey: async () => null }),
         instructions: "",
+        language: "en-US",
         tools: [],
         openSocket: () => {
           throw new Error("unused");

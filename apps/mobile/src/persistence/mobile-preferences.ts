@@ -14,6 +14,7 @@ import {
   type PullRequestMergeMethod,
   type SidebarProjectGroupingMode,
   type VoiceAgentPace,
+  type VoiceAgentProviderId,
 } from "@t3tools/contracts";
 import type { VoiceAgentMode } from "@t3tools/client-runtime/voice-agent";
 import type { ComposerEnterBehavior } from "../lib/composerEnterBehavior";
@@ -82,8 +83,11 @@ export interface Preferences {
   readonly dictationRemovesFillerWords?: boolean;
   /** Device-local counterparts of web's voice agent beta settings. iOS only. */
   readonly voiceAgentEnabled?: boolean;
+  readonly voiceAgentProvider?: VoiceAgentProviderId;
   /** A prebuilt Gemini voice; empty uses Gemini's default. */
   readonly voiceAgentVoice?: string;
+  /** An OpenAI Realtime voice; empty uses OpenAI's default. */
+  readonly voiceAgentOpenAIVoice?: string;
   readonly voiceAgentPace?: VoiceAgentPace;
   readonly voiceAgentMode?: VoiceAgentMode;
   /** @deprecated Kept temporarily so older OTA bundles retain the selected mode. */
@@ -165,7 +169,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     microphones?: ReadonlyArray<MicrophoneEntry>;
     dictationRemovesFillerWords?: boolean;
     voiceAgentEnabled?: boolean;
+    voiceAgentProvider?: VoiceAgentProviderId;
     voiceAgentVoice?: string;
+    voiceAgentOpenAIVoice?: string;
     voiceAgentPace?: VoiceAgentPace;
     voiceAgentMode?: VoiceAgentMode;
     projectGroupingEnabled?: boolean;
@@ -262,8 +268,14 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   if (typeof parsed.voiceAgentEnabled === "boolean") {
     preferences.voiceAgentEnabled = parsed.voiceAgentEnabled;
   }
+  if (parsed.voiceAgentProvider === "gemini" || parsed.voiceAgentProvider === "openai") {
+    preferences.voiceAgentProvider = parsed.voiceAgentProvider;
+  }
   if (typeof parsed.voiceAgentVoice === "string") {
     preferences.voiceAgentVoice = parsed.voiceAgentVoice;
+  }
+  if (typeof parsed.voiceAgentOpenAIVoice === "string") {
+    preferences.voiceAgentOpenAIVoice = parsed.voiceAgentOpenAIVoice;
   }
   if (
     parsed.voiceAgentPace === "slow" ||

@@ -20,7 +20,7 @@ import {
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsDragHandle } from "./components/SettingsDragHandle";
-import { useGeminiKeySaved } from "../voice-agent/geminiKey";
+import { geminiKey, useKeySaved } from "../voice-agent/apiKeys";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 
@@ -107,7 +107,7 @@ export function SettingsMicrophoneRouteScreen() {
   const removesFillerWords =
     AsyncResult.isSuccess(preferencesResult) &&
     preferencesResult.value.dictationRemovesFillerWords === true;
-  const geminiKeySaved = useGeminiKeySaved();
+  const geminiKeySaved = useKeySaved(geminiKey);
   const { permission, request: requestPermission } = useMicrophonePermission();
   const [editing, setEditing] = useState(false);
   const [drag, setDrag] = useState<{ readonly key: string; readonly translation: number } | null>(
