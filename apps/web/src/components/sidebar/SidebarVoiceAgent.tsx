@@ -1,4 +1,4 @@
-import type { VoiceAgentState } from "@t3tools/client-runtime/voice-agent";
+import { voiceAgentStatus } from "@t3tools/client-runtime/voice-agent";
 import { MicIcon, MicOffIcon, XIcon } from "lucide-react";
 import { memo } from "react";
 
@@ -7,22 +7,6 @@ import { Button } from "../ui/button";
 import { SidebarMenuButton, SidebarMenuItem } from "../ui/sidebar";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-
-function voiceStatus(state: VoiceAgentState): string {
-  switch (state.phase) {
-    case "idle":
-      return "Voice off";
-    case "connecting":
-      return "Connecting…";
-    case "error":
-      return state.error ?? "Voice stopped.";
-    case "live":
-      if (state.runningTools.length > 0) return "Working…";
-      if (state.agentSpeaking) return "Speaking";
-      if (state.talking || state.mode === "hands-free") return "Listening";
-      return "Hold to talk";
-  }
-}
 
 /** Sidebar utility button that starts and stops the voice session. */
 export const SidebarVoiceAgentButton = memo(function SidebarVoiceAgentButton() {
@@ -73,7 +57,7 @@ export const SidebarVoiceAgentPanel = memo(function SidebarVoiceAgentPanel() {
           }
           aria-live="polite"
         >
-          {voiceStatus(state)}
+          {voiceAgentStatus(state)}
         </span>
         <Button aria-label="Stop voice" onClick={handle.stop} size="icon-xs" variant="ghost-muted">
           <XIcon />

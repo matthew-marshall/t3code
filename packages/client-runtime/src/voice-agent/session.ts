@@ -1,15 +1,11 @@
-import type {
-  VoiceAgentPace,
-  VoiceAgentCallToolInput,
-  VoiceAgentCallToolResult,
-  VoiceAgentFunctionDeclaration,
-  VoiceAgentSession,
-} from "@t3tools/contracts";
+import type { VoiceAgentPace } from "@t3tools/contracts";
 
+import { GEMINI_LIVE_URL, VOICE_AGENT_MODEL } from "./gemini.ts";
 import {
   type LiveFunctionCall,
   type LiveFunctionResponse,
   type LiveServerMessage,
+  type VoiceAgentFunctionDeclaration,
   type VoiceAgentMode,
   decodeLiveServerMessage,
   liveActivityEndMessage,
@@ -57,15 +53,19 @@ export interface VoiceAgentSocketHandlers {
 
 /** Platform audio: 16 kHz PCM capture in, 24 kHz PCM playback out, both base64. */
 export interface VoiceAgentAudio {
-  startCapture(onChunk: (base64Pcm: string) => void): Promise<void>;
+  /** `onError` reports a microphone lost after capture started; the session ends with it. */
+  startCapture(
+    onChunk: (base64Pcm: string) => void,
+    onError: (message: string) => void,
+  ): Promise<void>;
   stopCapture(): Promise<void>;
   play(base64Pcm: string): void;
   /** Drops queued speech when the user interrupts the agent. */
   clearPlayback(): void;
 }
 
-/** A tool the client runs itself, such as navigating the UI. */
-export interface VoiceAgentLocalTool {
+/** A tool the agent can call. `run` resolves with what the agent is told; a thrown error is reported as one. */
+export interface VoiceAgentTool {
   readonly declaration: VoiceAgentFunctionDeclaration;
   readonly run: (args: Record<string, unknown>) => Promise<string>;
 }
@@ -84,9 +84,10 @@ const PACE_INSTRUCTIONS: Record<VoiceAgentPace, string | null> = {
 };
 
 export interface VoiceAgentSessionDependencies {
-  readonly createSession: () => Promise<VoiceAgentSession>;
-  readonly callTool: (input: VoiceAgentCallToolInput) => Promise<VoiceAgentCallToolResult>;
-  readonly localTools?: ReadonlyArray<VoiceAgentLocalTool>;
+  /** A single-use Gemini Live token for each connection; see `requestLiveToken`. */
+  readonly requestToken: () => Promise<string>;
+  readonly instructions: string;
+  readonly tools: ReadonlyArray<VoiceAgentTool>;
   /** What the user is looking at, added to the instructions when a connection opens. */
   readonly describeContext?: () => string | null;
   readonly openSocket: (url: string, handlers: VoiceAgentSocketHandlers) => VoiceAgentSocket;
@@ -128,15 +129,15 @@ const describeError = (error: unknown): string =>
   error instanceof Error && error.message.length > 0 ? error.message : "Voice session failed.";
 
 /**
- * One live voice conversation with Gemini. The client holds the socket and the
- * audio; the environment issues each connection's token and runs tool calls.
+ * One live voice conversation with Gemini. The client holds the key, the
+ * socket, the audio and the tools; nothing goes through a T3 environment
+ * except the actions the tools take.
  * Connections are replaced transparently (Live closes them every ~10 minutes)
  * using the resumption handle the server keeps sending.
  */
 export class VoiceAgentSessionController {
   private state: VoiceAgentState;
   private socket: VoiceAgentSocket | null = null;
-  private session: VoiceAgentSession | null = null;
   private resumptionHandle: string | null = null;
   private reconnects = 0;
   private capturing = false;
@@ -233,9 +234,9 @@ export class VoiceAgentSessionController {
 
   private async connect(): Promise<void> {
     const generation = ++this.generation;
-    let session: VoiceAgentSession;
+    let token: string;
     try {
-      session = await this.deps.createSession();
+      token = await this.deps.requestToken();
     } catch (error) {
       if (generation === this.generation) {
         this.fail(describeError(error));
@@ -245,12 +246,11 @@ export class VoiceAgentSessionController {
     if (generation !== this.generation) {
       return;
     }
-    this.session = session;
     // Every handler checks the generation: a replaced connection's late events are ignored.
-    this.socket = this.deps.openSocket(liveSocketUrl(session.websocketUrl, session.token), {
+    this.socket = this.deps.openSocket(liveSocketUrl(GEMINI_LIVE_URL, token), {
       onOpen: () => {
         if (generation !== this.generation) return;
-        this.send(this.setupMessage(session));
+        this.send(this.setupMessage());
       },
       onMessage: (data) => {
         if (generation !== this.generation) return;
@@ -281,13 +281,12 @@ export class VoiceAgentSessionController {
     await this.connect();
   }
 
-  private setupMessage(session: VoiceAgentSession) {
+  private setupMessage() {
     const context = this.deps.describeContext?.() ?? null;
-    const localTools = this.deps.localTools ?? [];
     // A resumed session remembers the conversation; a fresh one mid-conversation is told it.
     const recap = this.resumptionHandle === null ? transcriptRecap(this.state.transcript) : null;
     const systemInstruction = [
-      session.systemInstruction,
+      this.deps.instructions,
       PACE_INSTRUCTIONS[this.speech.pace],
       context === null ? null : `Currently on screen: ${context}`,
       recap === null ? null : `The conversation so far:\n${recap}`,
@@ -295,9 +294,9 @@ export class VoiceAgentSessionController {
       .filter((part) => part !== null)
       .join("\n\n");
     return liveSetupMessage({
-      model: session.model,
+      model: VOICE_AGENT_MODEL,
       systemInstruction,
-      tools: [...session.tools, ...localTools.map((tool) => tool.declaration)],
+      tools: this.deps.tools.map((tool) => tool.declaration),
       mode: this.state.mode,
       voice: this.speech.voice,
       resumptionHandle: this.resumptionHandle,
@@ -368,16 +367,15 @@ export class VoiceAgentSessionController {
 
   private async runToolCall(call: LiveFunctionCall): Promise<LiveFunctionResponse> {
     this.appendTranscript("tool", call.name);
-    const local = this.deps.localTools?.find((tool) => tool.declaration.name === call.name);
+    const tool = this.deps.tools.find((candidate) => candidate.declaration.name === call.name);
     try {
-      if (local !== undefined) {
-        return { id: call.id, name: call.name, response: { output: await local.run(call.args) } };
+      if (tool === undefined) {
+        throw new Error(`There is no tool named ${call.name}.`);
       }
-      const result = await this.deps.callTool({ name: call.name, arguments: call.args ?? {} });
       return {
         id: call.id,
         name: call.name,
-        response: result.isError ? { error: result.output } : { output: result.output },
+        response: { output: await tool.run(call.args ?? {}) },
       };
     } catch (error) {
       return { id: call.id, name: call.name, response: { error: describeError(error) } };
@@ -390,17 +388,26 @@ export class VoiceAgentSessionController {
     }
     this.capturing = true;
     try {
-      await this.deps.audio.startCapture((chunk) => {
-        if (this.state.phase !== "live") return;
-        if (this.state.mode === "push-to-talk" && !this.state.talking) return;
-        this.send(liveAudioMessage(chunk));
-      });
+      await this.deps.audio.startCapture(
+        (chunk) => {
+          if (this.state.phase !== "live") return;
+          if (this.state.mode === "push-to-talk" && !this.state.talking) return;
+          this.send(liveAudioMessage(chunk));
+        },
+        (message) => {
+          if (this.capturing) this.captureFailed(message);
+        },
+      );
     } catch (error) {
-      this.capturing = false;
-      this.generation += 1;
-      this.closeSocket();
-      this.fail(describeError(error));
+      this.captureFailed(describeError(error));
     }
+  }
+
+  /** `fail` then releases whatever part of the microphone did start. */
+  private captureFailed(message: string): void {
+    this.generation += 1;
+    this.closeSocket();
+    this.fail(message);
   }
 
   private async stopCapture(): Promise<void> {

@@ -2771,31 +2771,29 @@ export function GeneralSettingsPanel() {
         />
 
         {settings.voiceAgentEnabled ? (
-          <>
-            <SettingsRow
-              {...searchableSetting("voice-agent-api-key")}
-              description={
-                <>
-                  Stored on this environment&apos;s server, never on this device. Get a key from{" "}
-                  <a
-                    className="underline underline-offset-2"
-                    href="https://aistudio.google.com/apikey"
-                    target="_blank"
-                    rel="noreferrer noopener"
-                  >
-                    Google AI Studio
-                  </a>
-                  .
-                </>
-              }
-              control={
-                <VoiceAgentApiKeyControl
-                  saved={settings.voiceAgentGeminiApiKey.length > 0}
-                  onSave={(apiKey) => updateSettings({ voiceAgentGeminiApiKey: apiKey })}
-                />
-              }
-            />
+          <SettingsRow
+            {...searchableSetting("voice-agent-api-key")}
+            description={
+              <>
+                Kept on this device and only sent to Google; works with every environment. Get a key
+                from{" "}
+                <a
+                  className="underline underline-offset-2"
+                  href="https://aistudio.google.com/apikey"
+                  target="_blank"
+                  rel="noreferrer noopener"
+                >
+                  Google AI Studio
+                </a>
+                .
+              </>
+            }
+            control={<VoiceAgentApiKeyControl />}
+          />
+        ) : null}
 
+        {settings.voiceAgentEnabled ? (
+          <>
             <SettingsRow
               {...searchableSetting("voice-agent-voice")}
               description="The voice the agent speaks with. Changing it mid-conversation reconnects."

@@ -1,6 +1,6 @@
-import type { VoiceAgentCallToolInput, VoiceAgentSession } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
+import { GEMINI_LIVE_URL } from "./gemini.ts";
 import type { VoiceAgentMode } from "./liveProtocol.ts";
 import {
   VoiceAgentSessionController,
@@ -47,33 +47,36 @@ const flush = async () => {
 function harness(mode: VoiceAgentMode = "hands-free") {
   const sockets: Array<FakeSocket> = [];
   const states: Array<VoiceAgentState> = [];
-  const toolCalls: Array<VoiceAgentCallToolInput> = [];
+  const toolCalls: Array<Record<string, unknown>> = [];
   let tokens = 0;
   let onChunk: ((chunk: string) => void) | null = null;
+  let onCaptureError: ((message: string) => void) | null = null;
   const audio = {
-    startCapture: vi.fn(async (listener: (chunk: string) => void) => {
-      onChunk = listener;
-    }),
+    startCapture: vi.fn(
+      async (listener: (chunk: string) => void, onError: (message: string) => void) => {
+        onChunk = listener;
+        onCaptureError = onError;
+      },
+    ),
     stopCapture: vi.fn(async () => {
       onChunk = null;
+      onCaptureError = null;
     }),
     play: vi.fn(),
     clearPlayback: vi.fn(),
   };
   const controller = new VoiceAgentSessionController(
     {
-      createSession: async (): Promise<VoiceAgentSession> => ({
-        token: `token-${++tokens}`,
-        websocketUrl: "wss://live.test/ws",
-        model: "gemini-3.8-live",
-        systemInstruction: "Be brief.",
-        tools: [{ name: "t3_thread_list", description: "List threads", parametersJsonSchema: {} }],
-      }),
-      callTool: async (input) => {
-        toolCalls.push(input);
-        return { isError: false, output: '{"threads":[]}' };
-      },
-      localTools: [
+      requestToken: async () => `token-${++tokens}`,
+      instructions: "Be brief.",
+      tools: [
+        {
+          declaration: { name: "list_threads", description: "List", parametersJsonSchema: {} },
+          run: async (args) => {
+            toolCalls.push(args);
+            return '{"threads":[]}';
+          },
+        },
         {
           declaration: { name: "open_thread", description: "Open", parametersJsonSchema: {} },
           run: async (args) => `opened ${String(args.title)}`,
@@ -105,22 +108,24 @@ function harness(mode: VoiceAgentMode = "hands-free") {
     audio,
     connect,
     speak: (chunk: string) => onChunk?.(chunk),
+    loseMicrophone: (message: string) => onCaptureError?.(message),
   };
 }
 
 describe("VoiceAgentSessionController", () => {
-  it("opens the connection with the session's tools, local tools and screen context", async () => {
+  it("opens the connection with the tools, instructions and screen context", async () => {
     const h = harness();
     await h.controller.start();
     const socket = await h.connect();
 
-    expect(socket.url).toBe("wss://live.test/ws?access_token=token-1");
+    expect(socket.url).toBe(`${GEMINI_LIVE_URL}?access_token=token-1`);
     const [setup] = socket.sentOf("setup");
     expect(setup!.setup.model).toBe("models/gemini-3.8-live");
     expect(setup!.setup.tools[0].functionDeclarations.map((tool: any) => tool.name)).toEqual([
-      "t3_thread_list",
+      "list_threads",
       "open_thread",
     ]);
+    expect(setup!.setup.systemInstruction.parts[0].text).toContain("Be brief.");
     expect(setup!.setup.systemInstruction.parts[0].text).toContain("Thread: Fix login");
     expect(setup!.setup.realtimeInputConfig.automaticActivityDetection.disabled).toBe(false);
     expect(h.controller.getState().phase).toBe("live");
@@ -129,7 +134,7 @@ describe("VoiceAgentSessionController", () => {
     expect(socket.sentOf("realtimeInput").at(-1)!.realtimeInput.audio.data).toBe("pcm");
   });
 
-  it("answers tool calls from the environment and from the client", async () => {
+  it("answers tool calls, and reports an unknown tool as an error", async () => {
     const h = harness();
     await h.controller.start();
     const socket = await h.connect();
@@ -137,17 +142,23 @@ describe("VoiceAgentSessionController", () => {
     socket.receive({
       toolCall: {
         functionCalls: [
-          { id: "a", name: "t3_thread_list", args: { limit: 3 } },
+          { id: "a", name: "list_threads", args: { limit: 3 } },
           { id: "b", name: "open_thread", args: { title: "Fix login" } },
+          { id: "c", name: "delete_everything", args: {} },
         ],
       },
     });
     await flush();
 
-    expect(h.toolCalls).toEqual([{ name: "t3_thread_list", arguments: { limit: 3 } }]);
+    expect(h.toolCalls).toEqual([{ limit: 3 }]);
     expect(socket.sentOf("toolResponse")[0]!.toolResponse.functionResponses).toEqual([
-      { id: "a", name: "t3_thread_list", response: { output: '{"threads":[]}' } },
+      { id: "a", name: "list_threads", response: { output: '{"threads":[]}' } },
       { id: "b", name: "open_thread", response: { output: "opened Fix login" } },
+      {
+        id: "c",
+        name: "delete_everything",
+        response: { error: "There is no tool named delete_everything." },
+      },
     ]);
     expect(h.controller.getState().runningTools).toEqual([]);
   });
@@ -158,7 +169,7 @@ describe("VoiceAgentSessionController", () => {
     const socket = await h.connect();
 
     socket.receive({
-      toolCall: { functionCalls: [{ id: "a", name: "t3_thread_list", args: {} }] },
+      toolCall: { functionCalls: [{ id: "a", name: "list_threads", args: {} }] },
     });
     socket.receive({ toolCallCancellation: { ids: ["a"] } });
     await flush();
@@ -228,7 +239,7 @@ describe("VoiceAgentSessionController", () => {
 
     expect(first.closed).toBe(true);
     const second = h.sockets[1]!;
-    expect(second.url).toBe("wss://live.test/ws?access_token=token-2");
+    expect(second.url).toBe(`${GEMINI_LIVE_URL}?access_token=token-2`);
     second.open();
     expect(second.sentOf("setup")[0]!.setup.sessionResumption).toEqual({ handle: "handle-1" });
     second.receive({ setupComplete: {} });
@@ -280,6 +291,20 @@ describe("VoiceAgentSessionController", () => {
     expect(next.systemInstruction.parts[0].text).not.toContain("Speak quickly");
   });
 
+  it("ends the session when the microphone is lost mid-conversation", async () => {
+    const h = harness();
+    await h.controller.start();
+    const socket = await h.connect();
+    h.loseMicrophone("Lost the microphone.");
+    await flush();
+    expect(h.controller.getState()).toMatchObject({
+      phase: "error",
+      error: "Lost the microphone.",
+    });
+    expect(socket.closed).toBe(true);
+    expect(h.audio.stopCapture).toHaveBeenCalled();
+  });
+
   it("reports a failure to start and releases the microphone on stop", async () => {
     const h = harness();
     await h.controller.start();
@@ -290,10 +315,11 @@ describe("VoiceAgentSessionController", () => {
 
     const failing = new VoiceAgentSessionController(
       {
-        createSession: async () => {
-          throw new Error("Voice is not set up on this environment.");
+        requestToken: async () => {
+          throw new Error("Add a Gemini API key in Settings → Voice agent.");
         },
-        callTool: async () => ({ isError: false, output: "" }),
+        instructions: "",
+        tools: [],
         openSocket: () => {
           throw new Error("unused");
         },
@@ -305,7 +331,7 @@ describe("VoiceAgentSessionController", () => {
     await failing.start();
     expect(failing.getState()).toMatchObject({
       phase: "error",
-      error: "Voice is not set up on this environment.",
+      error: "Add a Gemini API key in Settings → Voice agent.",
     });
   });
 });

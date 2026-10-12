@@ -13,7 +13,9 @@ import {
   type ProviderInstanceId,
   type PullRequestMergeMethod,
   type SidebarProjectGroupingMode,
+  type VoiceAgentPace,
 } from "@t3tools/contracts";
+import type { VoiceAgentMode } from "@t3tools/client-runtime/voice-agent";
 import type { ComposerEnterBehavior } from "../lib/composerEnterBehavior";
 import type { FollowUpBehavior } from "../lib/followUpBehavior";
 import { isMicrophoneKind, type MicrophoneEntry } from "../lib/microphonePriority";
@@ -76,6 +78,12 @@ export interface Preferences {
   readonly followUpBehavior?: FollowUpBehavior;
   /** Microphone kinds and remembered devices, most preferred first. iOS only. */
   readonly microphones?: ReadonlyArray<MicrophoneEntry>;
+  /** Device-local counterparts of web's voice agent beta settings. iOS only. */
+  readonly voiceAgentEnabled?: boolean;
+  /** A prebuilt Gemini voice; empty uses Gemini's default. */
+  readonly voiceAgentVoice?: string;
+  readonly voiceAgentPace?: VoiceAgentPace;
+  readonly voiceAgentMode?: VoiceAgentMode;
   /** @deprecated Kept temporarily so older OTA bundles retain the selected mode. */
   readonly projectGroupingEnabled?: boolean;
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
@@ -153,6 +161,10 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     composerEnterBehavior?: ComposerEnterBehavior;
     followUpBehavior?: FollowUpBehavior;
     microphones?: ReadonlyArray<MicrophoneEntry>;
+    voiceAgentEnabled?: boolean;
+    voiceAgentVoice?: string;
+    voiceAgentPace?: VoiceAgentPace;
+    voiceAgentMode?: VoiceAgentMode;
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
     planModeEnabled?: boolean;
@@ -240,6 +252,22 @@ function sanitizePreferences(parsed: Preferences): Preferences {
         ? [{ kind: entry.kind, uid: entry.uid, name: entry.name }]
         : [];
     });
+  }
+  if (typeof parsed.voiceAgentEnabled === "boolean") {
+    preferences.voiceAgentEnabled = parsed.voiceAgentEnabled;
+  }
+  if (typeof parsed.voiceAgentVoice === "string") {
+    preferences.voiceAgentVoice = parsed.voiceAgentVoice;
+  }
+  if (
+    parsed.voiceAgentPace === "slow" ||
+    parsed.voiceAgentPace === "normal" ||
+    parsed.voiceAgentPace === "fast"
+  ) {
+    preferences.voiceAgentPace = parsed.voiceAgentPace;
+  }
+  if (parsed.voiceAgentMode === "push-to-talk" || parsed.voiceAgentMode === "hands-free") {
+    preferences.voiceAgentMode = parsed.voiceAgentMode;
   }
   if (typeof parsed.projectGroupingEnabled === "boolean") {
     preferences.projectGroupingEnabled = parsed.projectGroupingEnabled;

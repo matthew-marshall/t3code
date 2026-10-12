@@ -26,6 +26,7 @@ import { useMobileNavigationTheme } from "./lib/useMobileNavigationTheme";
 import { useUiRuntimeMemoryWarningGc } from "./lib/useUiRuntimeMemoryWarningGc";
 import { SubscriptionUsageCoordinator } from "./widgets/SubscriptionUsageCoordinator";
 import { VoiceInputProvider } from "./features/voice-input/VoiceInputProvider";
+import { VoiceAgentPanel } from "./features/voice-agent/VoiceAgentPanel";
 import { GlobalVoiceInputControl } from "./features/voice-input/GlobalVoiceInputControl";
 import { NativeLayoutMetricsProvider } from "./native/native-layout-metrics";
 
@@ -100,6 +101,7 @@ function AppContent() {
                   <ThreadArrangementHost />
                 </NativeLayoutMetricsProvider>
               </GlobalVoiceInputControl>
+              <VoiceAgentPanel />
               {/* Anchored-menu overlays render here — in-window, so the
                 keyboard stays up while a dropdown is open. */}
               <OverlayPortalHost />
