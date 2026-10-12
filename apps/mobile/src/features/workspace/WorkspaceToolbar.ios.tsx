@@ -42,6 +42,7 @@ export function WorkspaceToolbar(props: {
   const searchRef = useRef<SearchBarCommands>(null);
   const tab = workspace.state.tabs[workspace.state.selectedTab];
   const selectedTab = workspace.state.selectedTab;
+  const searchable = selectedTab !== "drive";
   const enterSearch = useCallback(() => {
     workspace.dispatch({
       type: "scroll",
@@ -52,11 +53,11 @@ export function WorkspaceToolbar(props: {
     if (props.sidebar && !panes.primarySidebarVisible) togglePrimarySidebar();
   }, [workspace, selectedTab, props.sidebar, panes.primarySidebarVisible, togglePrimarySidebar]);
   const focusSearch = useCallback(() => {
-    if (!workspace.isTabActive(selectedTab)) return false;
+    if (!searchable || !workspace.isTabActive(selectedTab)) return false;
     if (!NATIVE_LIQUID_GLASS_SUPPORTED) enterSearch();
     searchRef.current?.focus();
     return true;
-  }, [workspace, selectedTab, enterSearch]);
+  }, [searchable, workspace, selectedTab, enterSearch]);
   useHardwareKeyboardCommand("focusSearch", focusSearch);
   const restoreSearch = useCallback(() => {
     if (isTabActive(selectedTab) && tab.searchMode !== "resting")
@@ -80,8 +81,9 @@ export function WorkspaceToolbar(props: {
         options={{
           // Liquid Glass keeps search mounted as UIKit's own header button, which
           // morphs into the field; swapping a stacked bar in and out cannot animate.
+          // The Drive tab has nothing to search.
           headerSearchBarOptions:
-            NATIVE_LIQUID_GLASS_SUPPORTED || tab.searchMode !== "resting"
+            searchable && (NATIVE_LIQUID_GLASS_SUPPORTED || tab.searchMode !== "resting")
               ? {
                   ref: searchRef,
                   autoFocus: tab.searchMode === "active",
@@ -126,7 +128,7 @@ export function WorkspaceToolbar(props: {
             })
           }
         />
-        {NATIVE_LIQUID_GLASS_SUPPORTED ? null : (
+        {searchable && !NATIVE_LIQUID_GLASS_SUPPORTED ? (
           <Toolbar.Button
             accessibilityLabel={
               selectedTab === "pullRequests" ? "Search pull requests" : "Search threads"
@@ -134,9 +136,13 @@ export function WorkspaceToolbar(props: {
             icon="magnifyingglass"
             onPress={focusSearch}
           />
-        )}
+        ) : null}
         {voiceAgent.visible ? (
           <Toolbar.Button
+            identifier="workspace-voice-agent"
+            // Its own glass pill rather than a slot in the search/settings group: taps near the
+            // group's edge animated the group without reaching this button.
+            separateBackground
             accessibilityLabel={voiceAgent.active ? "End voice" : "Talk to T3 Code"}
             icon={voiceAgent.active ? "waveform.circle.fill" : "waveform"}
             onPress={voiceAgent.toggle}

@@ -1,5 +1,5 @@
 import { useNavigation } from "@react-navigation/native";
-import { use, useCallback, useMemo } from "react";
+import { use, useCallback, useEffect, useMemo } from "react";
 import { Platform, View, useWindowDimensions } from "react-native";
 import { useKeyboardState } from "react-native-keyboard-controller";
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -18,6 +18,8 @@ import { dispatchHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCom
 import { WorkspaceConnectionTitle } from "../home/WorkspaceConnectionTitle";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { PullRequestsScreen } from "../pull-requests/PullRequestsScreen";
+import { DriveScreen } from "../voice-agent/DriveScreen";
+import { useVoiceAgentToggle } from "../voice-agent/useVoiceAgentToggle";
 import {
   WorkspaceTabsContext,
   WorkspaceTabsProvider,
@@ -31,6 +33,7 @@ import { useSidebarWorkspaceTabs, useSystemWorkspaceTabBar } from "./useSystemWo
 const TAB_TITLES = {
   threads: "Threads",
   pullRequests: "Pull requests",
+  drive: "Drive",
 };
 
 function WorkspaceRootTitle(props: {
@@ -71,7 +74,13 @@ function WorkspaceRootContent() {
   const insets = useSafeAreaInsets();
   const keyboardHeight = useKeyboardState((keyboard) => keyboard.height);
   const workspace = useWorkspaceTabs()!;
-  const { state } = workspace;
+  const { state, dispatch } = workspace;
+  // Drive is listed only while voice is on; turning voice off leaves it for Threads.
+  const driveAvailable = useVoiceAgentToggle().visible;
+  useEffect(() => {
+    if (!driveAvailable && state.selectedTab === "drive")
+      dispatch({ type: "select", tab: "threads" });
+  }, [driveAvailable, state.selectedTab, dispatch]);
   const renderHeaderTitle = useCallback(
     () => (
       <WorkspaceRootTitle
@@ -142,7 +151,13 @@ function WorkspaceRootContent() {
         )}
         {sidebarPicker ? <WorkspaceSidebarTabs /> : null}
         <SafeAreaInsetsContext value={sidebarPicker ? { ...insets, top: 0 } : insets}>
-          {state.selectedTab === "threads" ? <HomeRouteScreen /> : <PullRequestsScreen />}
+          {state.selectedTab === "threads" ? (
+            <HomeRouteScreen />
+          ) : state.selectedTab === "drive" ? (
+            <DriveScreen />
+          ) : (
+            <PullRequestsScreen />
+          )}
         </SafeAreaInsetsContext>
         <WorkspaceToolbar
           sidebar={sidebarNavigation}
