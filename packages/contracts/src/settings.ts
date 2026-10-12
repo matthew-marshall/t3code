@@ -466,6 +466,8 @@ export const ClientSettingsSchema = Schema.Struct({
   // Empty uses Gemini's default voice.
   voiceAgentVoice: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   voiceAgentPace: VoiceAgentPace.pipe(Schema.withDecodingDefault(Effect.succeed("normal"))),
+  // Beta: a composer microphone that transcribes with Gemini 3.5 Transcribe (the voice agent's key).
+  dictationEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   showSkillsInSlashMenu: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   // Legacy sidebar (the original per-project tree). Deliberately a fresh key
   // (was `sidebarV2Enabled` + `sidebarV2ConfiguredByUser`): decoding drops the
@@ -1741,6 +1743,7 @@ export const ClientSettingsPatch = Schema.Struct({
   voiceAgentEnabled: Schema.optionalKey(Schema.Boolean),
   voiceAgentVoice: Schema.optionalKey(Schema.String),
   voiceAgentPace: Schema.optionalKey(VoiceAgentPace),
+  dictationEnabled: Schema.optionalKey(Schema.Boolean),
   showSkillsInSlashMenu: Schema.optionalKey(Schema.Boolean),
   legacySidebarEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarWorkingShelfEnabled: Schema.optionalKey(Schema.Boolean),

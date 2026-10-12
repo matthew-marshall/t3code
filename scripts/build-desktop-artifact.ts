@@ -2830,7 +2830,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         NSScreenCaptureUsageDescription:
           "T3 Code captures the active window when you use the window capture shortcut.",
         NSMicrophoneUsageDescription:
-          "T3 Code uses your microphone when you talk to the voice agent.",
+          "T3 Code uses your microphone when you dictate a prompt or talk to the voice agent.",
         // macOS lists an app under Default web browser only when it opens web
         // pages as documents as well as http and https links (see protocols).
         CFBundleDocumentTypes: [
