@@ -10,7 +10,11 @@ import {
   type VoiceInputControllerDependencies,
   type VoiceRecorder,
 } from "./controller.ts";
-import type { PreparedVoiceTranscription, VoiceTranscriber } from "./transcription.ts";
+import {
+  type PreparedVoiceTranscription,
+  type VoiceTranscriber,
+  VoiceTranscriptionError,
+} from "./transcription.ts";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -164,6 +168,38 @@ describe("VoiceInputController", () => {
     await denied.controller.start();
     expect(denied.controller.currentState.errorAction).toBe("settings");
     expect(denied.recorder.record).not.toHaveBeenCalled();
+  });
+
+  it("shows a transcriber's own message for what the user can fix", async () => {
+    const missingKey = createHarness({
+      getTranscriber: () => ({
+        prepare: async () => {
+          throw new VoiceTranscriptionError("unavailable", "no key", {
+            displayMessage: "Add a Gemini API key.",
+          });
+        },
+      }),
+    });
+    await missingKey.controller.start();
+    expect(missingKey.controller.currentState.error).toBe("Add a Gemini API key.");
+    expect(missingKey.recorder.record).not.toHaveBeenCalled();
+
+    const rejected = createHarness({
+      getTranscriber: () => ({
+        prepare: async () =>
+          preparedTranscription(async () => {
+            throw new VoiceTranscriptionError("transcription-failed", "rejected", {
+              displayMessage: "Gemini rejected the API key.",
+            });
+          }),
+      }),
+    });
+    await rejected.controller.start();
+    await rejected.controller.stop();
+    expect(rejected.controller.currentState).toMatchObject({
+      phase: "error",
+      error: "Gemini rejected the API key.",
+    });
   });
 
   it.each(["permission", "transcription"] as const)(

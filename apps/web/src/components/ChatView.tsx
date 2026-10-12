@@ -8242,7 +8242,8 @@ export default function ChatView(props: ChatViewProps) {
         command === "composer.host" ||
         command === "composer.effort" ||
         command === "composer.mode" ||
-        command === "composer.workspace"
+        command === "composer.workspace" ||
+        command === "composer.dictate"
       ) {
         event.preventDefault();
         event.stopPropagation();

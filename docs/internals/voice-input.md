@@ -2,8 +2,10 @@
 
 Transcription edits a composer draft. It does not submit an agent turn. Audio is
 temporary client input, and only normal message submission sends the resulting
-text. The current implementation transcribes locally on supported iOS devices;
-environment-backed transcription is not implemented.
+text. iOS transcribes on the device, or with Gemini when the user turns that on;
+web and desktop always use Gemini, recording with `MediaRecorder`. Gemini uses the
+client's own key (the same key as the voice agent). No path goes through an
+environment.
 
 The [shared controller](../../packages/client-runtime/src/voice-input/controller.ts)
 owns the operation while the client supplies capture and transcription. Preparation

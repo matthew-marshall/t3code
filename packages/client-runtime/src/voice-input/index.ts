@@ -18,3 +18,7 @@ export {
   type VoiceTranscriptionErrorCode,
   type VoiceTranscriptionOptions,
 } from "./transcription.ts";
+export {
+  createGeminiVoiceTranscriber,
+  type GeminiVoiceTranscriberOptions,
+} from "./geminiTranscriber.ts";

@@ -152,6 +152,19 @@ Stashes containing uploaded files must be restored in their original environment
 Those files are retained for 24 hours. After an upload expires, restore the prompt
 and use **Attach again** or remove the missing file before sending.
 
+## Dictation on web and desktop
+
+Turn on **Settings → General → Dictation** and add a Gemini API key there. A
+microphone button then appears next to the attach button in the composer. Press
+it (or **Cmd/Ctrl+Option/Alt+V**) to record, and press it again to transcribe.
+The text goes where your cursor was when you started; the composer can't be
+edited until transcription finishes. The ✕ button discards the recording.
+
+Transcription uses Gemini 3.5 Transcribe, which drops "um"s, stutters and false
+starts. The recording goes from your browser or the desktop app straight to Google
+with your key, and is billed to it. The key stays on the device and is shared with
+the voice agent.
+
 ## Voice input on iPhone
 
 On supported iPhones with iOS 26 or later, use the composer's microphone to record,
@@ -171,8 +184,14 @@ for example, put **Other Bluetooth** above your AirPods so a new headset is pref
 while the AirPods microphone stays low. By default, CarPlay comes after the built-in
 microphone.
 
-Transcription runs on your device. T3 Code deletes the temporary audio after
-transcription or cancellation; only the message text is sent when you submit.
+Transcription runs on your device unless you turn on **Settings → Microphone →
+Remove filler words**. Then each recording is transcribed by Gemini 3.5 Transcribe,
+which drops "um"s, stutters and false starts. It uses the Gemini API key from
+**Settings → Voice Agent**, sends the recording from your phone straight to Google,
+and is billed to that key. It needs a network connection.
+
+T3 Code deletes the temporary audio after transcription or cancellation; only the
+message text is sent when you submit.
 
 ## Queued messages
 
