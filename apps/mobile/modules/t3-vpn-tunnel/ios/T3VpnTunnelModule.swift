@@ -16,6 +16,9 @@ struct VpnTunnelStartOptions: Record {
 // local port once the tunnel is up, and onState reports later drops and reconnects.
 public final class T3VpnTunnelModule: Module {
   private let lock = NSLock()
+  // Held while a core is stopped or its listener reopened, so stop() cannot free a core that
+  // occore_reopen_listener is waiting on. Never taken by the tunnel's own callbacks.
+  private let lifecycleLock = NSLock()
   private var core: OpaquePointer?
   private var startPromise: Promise?
   private var state = "stopped"
@@ -51,6 +54,24 @@ public final class T3VpnTunnelModule: Module {
       self.lock.lock()
       defer { self.lock.unlock() }
       return ["state": self.state, "localPort": self.core.map { Int(occore_local_port($0)) } as Any]
+    }
+
+    // iOS reclaims a suspended app's listening sockets, so the local forward goes dead after the
+    // phone has been locked a while even though the VPN reconnects. Call on returning to the
+    // foreground, before connecting through the tunnel; resolves with the (usually same) port.
+    AsyncFunction("reopenListener") { () -> [String: Any] in
+      self.lifecycleLock.lock()
+      defer { self.lifecycleLock.unlock() }
+      self.lock.lock()
+      let current = self.core
+      self.lock.unlock()
+      guard let current else { return ["localPort": NSNull()] }
+      let result = occore_reopen_listener(current)
+      if result != 0 {
+        throw Exception(
+          name: "ERR_VPN_REOPEN", description: "Could not reopen the tunnel's local port: \(String(cString: strerror(-result)))")
+      }
+      return ["localPort": Int(occore_local_port(current))]
     }
 
     OnDestroy {
@@ -141,6 +162,10 @@ public final class T3VpnTunnelModule: Module {
     core = nil
     lock.unlock()
     // occore_stop joins the tunnel threads, which may still call handleState.
-    if let current { occore_stop(current) }
+    if let current {
+      lifecycleLock.lock()
+      occore_stop(current)
+      lifecycleLock.unlock()
+    }
   }
 }

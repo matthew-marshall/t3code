@@ -19,6 +19,11 @@ interface NativeVpnTunnelModule {
   start(options: VpnTunnelStartOptions): Promise<{ readonly localPort: number }>;
   stop(): Promise<void>;
   getState(): { readonly state: VpnTunnelState; readonly localPort?: number };
+  /**
+   * Replaces the local forward's listening socket, which iOS reclaims while the app is
+   * suspended. Missing from builds that predate it.
+   */
+  reopenListener?(): Promise<{ readonly localPort: number | null }>;
   /** Recent timestamped tunnel log lines, oldest first. */
   getLog(): ReadonlyArray<string>;
   addListener(

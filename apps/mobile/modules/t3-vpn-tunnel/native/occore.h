@@ -51,6 +51,14 @@ int occore_start(const occore_config *config, occore **out);
 /* The bound local port (useful when config.local_port was 0). */
 uint16_t occore_local_port(const occore *core);
 
+/*
+ * Replaces the local forward's listening socket, on the same port when it is free, and returns
+ * 0 or -errno (-ETIMEDOUT after 3 s). Call when the app returns to the foreground: iOS reclaims a
+ * suspended app's listening sockets, and a reclaimed listener never accepts again. Connections
+ * already forwarded are unaffected. Read the port again afterwards with occore_local_port.
+ */
+int occore_reopen_listener(occore *core);
+
 /* Cancels the tunnel, closes forwarded connections, and frees the core. */
 void occore_stop(occore *core);
 
