@@ -7,6 +7,13 @@ import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
 import type { WorkspaceTab } from "./workspace-tabs-state";
 import { NativeWorkspaceTabActivityContext } from "../../native/v5-workspace-context";
 import { useSystemWorkspaceTabBar } from "./useSystemWorkspaceTabBar";
+import { useVoiceAgentToggle } from "../voice-agent/useVoiceAgentToggle";
+
+const TAB_LABELS: Record<WorkspaceTab, string> = {
+  threads: "Threads",
+  pullRequests: "Pull requests",
+  drive: "Drive",
+};
 
 // Tabler's git-pull-request geometry, rasterized at 1x/2x/3x for UIKit template images.
 const PULL_REQUEST_ICON = require("../../../assets/icons/pull-request.png");
@@ -52,6 +59,10 @@ export function WorkspaceNativeTabs(props: {
     Platform.OS === "ios" && !Platform.isPad && (metrics?.verticalBarEdge ?? "none") === "none";
   const [provenance, setProvenance] = useState(0);
   const systemTabBar = useSystemWorkspaceTabBar();
+  const driveAvailable = useVoiceAgentToggle().visible;
+  const tabs: ReadonlyArray<WorkspaceTab> = driveAvailable
+    ? ["threads", "pullRequests", "drive"]
+    : ["threads", "pullRequests"];
   const selectedTab = workspace.state.selectedTab;
   const request = useMemo(
     () => ({ selectedScreenKey: selectedTab, baseProvenance: provenance }),
@@ -68,7 +79,7 @@ export function WorkspaceNativeTabs(props: {
           tabBarTrailingActionAccessibilityLabel: "New chat",
           onTabBarTrailingActionPress: props.onNewTask,
           tabBarMinimizeBehavior: "never",
-          tabBarLeadingWidth: phoneBar ? 220 : 0,
+          tabBarLeadingWidth: phoneBar ? (driveAvailable ? 280 : 220) : 0,
         }}
         onTabSelectionRejected={({
           nativeEvent,
@@ -77,7 +88,7 @@ export function WorkspaceNativeTabs(props: {
         }}
         onTabSelected={({ nativeEvent }: NativeSyntheticEvent<TabSelectedEvent>) => {
           const tab = nativeEvent.selectedScreenKey;
-          if (tab !== "threads" && tab !== "pullRequests") return;
+          if (tab !== "threads" && tab !== "pullRequests" && tab !== "drive") return;
           setProvenance(nativeEvent.provenance);
           if (nativeEvent.actionOrigin === "programmatic-js" || tab === selectedTab) return;
           Keyboard.dismiss();
@@ -85,19 +96,25 @@ export function WorkspaceNativeTabs(props: {
           workspace.dispatch({ type: "select", tab });
         }}
       >
-        {(["threads", "pullRequests"] as const).map((tab: WorkspaceTab) => (
+        {tabs.map((tab) => (
           <Tabs.Screen
             key={tab}
             screenKey={tab}
             title=""
-            tabBarItemAccessibilityLabel={tab === "threads" ? "Threads" : "Pull requests"}
+            tabBarItemAccessibilityLabel={TAB_LABELS[tab]}
             ios={{
               icon:
                 tab === "threads"
                   ? { type: "sfSymbol", name: "text.bubble" }
-                  : { type: "templateSource", templateSource: PULL_REQUEST_ICON },
+                  : tab === "drive"
+                    ? { type: "sfSymbol", name: "car" }
+                    : { type: "templateSource", templateSource: PULL_REQUEST_ICON },
               selectedIcon:
-                tab === "threads" ? { type: "sfSymbol", name: "text.bubble.fill" } : undefined,
+                tab === "threads"
+                  ? { type: "sfSymbol", name: "text.bubble.fill" }
+                  : tab === "drive"
+                    ? { type: "sfSymbol", name: "car.fill" }
+                    : undefined,
               overrideScrollViewContentInsetAdjustmentBehavior: false,
             }}
           >

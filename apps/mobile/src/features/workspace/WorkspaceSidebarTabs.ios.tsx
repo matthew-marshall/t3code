@@ -3,6 +3,7 @@ import { pickerStyle, tag } from "@expo/ui/swift-ui/modifiers";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { Keyboard, View } from "react-native";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import { useVoiceAgentToggle } from "../voice-agent/useVoiceAgentToggle";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import type { WorkspaceTab } from "./workspace-tabs-state";
 
@@ -11,6 +12,7 @@ export function WorkspaceSidebarTabs() {
   const workspace = useWorkspaceTabs()!;
   const navigation = useNavigation();
   const { themeAppearance } = useAppearancePreferences();
+  const driveAvailable = useVoiceAgentToggle().visible;
   return (
     <View className="px-4 pb-3 pt-2">
       <Host
@@ -31,6 +33,7 @@ export function WorkspaceSidebarTabs() {
         >
           <Text modifiers={[tag("threads")]}>Threads</Text>
           <Text modifiers={[tag("pullRequests")]}>Pull requests</Text>
+          {driveAvailable ? <Text modifiers={[tag("drive")]}>Drive</Text> : null}
         </Picker>
       </Host>
     </View>

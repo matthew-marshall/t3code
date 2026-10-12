@@ -1,4 +1,5 @@
-export type WorkspaceTab = "threads" | "pullRequests";
+/** "drive" is the voice agent's driving screen, listed only while voice is turned on (iOS). */
+export type WorkspaceTab = "threads" | "pullRequests" | "drive";
 export type WorkspaceSearchMode = "resting" | "active" | "expanded";
 
 export interface WorkspaceTabState {
@@ -22,7 +23,7 @@ export function initialWorkspaceTabsState(): WorkspaceTabsState {
   return {
     selectedTab: "threads",
     selectionRevision: 0,
-    tabs: { threads: emptyTab(), pullRequests: emptyTab() },
+    tabs: { threads: emptyTab(), pullRequests: emptyTab(), drive: emptyTab() },
   };
 }
 

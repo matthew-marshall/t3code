@@ -52,7 +52,7 @@ export function WorkspaceTabsProvider(props: { readonly children: ReactNode }) {
   const isTabActive = useCallback((tab: WorkspaceTab) => activeTab.current === tab, []);
   const [threadsProjectKey, setThreadsProjectKey] = useState<string | null>(null);
   const [pullRequestEnvironmentId, setPullRequestEnvironmentId] = useState<string | null>(null);
-  const scrollOffsets = useRef({ threads: 0, pullRequests: 0 });
+  const scrollOffsets = useRef({ threads: 0, pullRequests: 0, drive: 0 });
   const scrollAnchors = useRef<Partial<Record<WorkspaceTab, WorkspaceScrollAnchor>>>({});
   const getScrollOffset = useCallback((tab: WorkspaceTab) => scrollOffsets.current[tab], []);
   const recordScrollOffset = useCallback((tab: WorkspaceTab, offset: number) => {
