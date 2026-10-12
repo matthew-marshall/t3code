@@ -82,6 +82,10 @@ struct occore {
 	int pending_net;        /* guarded by lock */
 	struct net_config net;  /* guarded by lock */
 	int quit;               /* guarded by lock */
+	int reopen_requested;   /* guarded by lock */
+	unsigned reopen_generation; /* guarded by lock; bumped after each requested reopen */
+	int reopen_result;      /* guarded by lock */
+	pthread_cond_t reopened;
 	int tun_attached;       /* oc thread only */
 
 	/* net thread only */
@@ -435,14 +439,50 @@ static void resolve_target(struct occore *core)
 		target_resolved(core->cfg.target_host, NULL, core);
 }
 
+static int bind_listener(struct occore *core, uint16_t port);
+
+/*
+ * Net thread only. iOS reclaims a suspended app's listening sockets (Apple TN2277): after the
+ * phone has been locked a while, the listener looks open but never accepts again, while the
+ * VPN itself reconnects on its own. The listener is replaced, on the same port when possible so
+ * the app's next connection attempt needs nothing new.
+ */
+static int reopen_listener(struct occore *core)
+{
+	uint16_t port = core->local_port;
+	int ret;
+
+	if (core->listen_fd >= 0)
+		close(core->listen_fd);
+	core->listen_fd = -1;
+	ret = bind_listener(core, port);
+	if (ret) {
+		if (core->listen_fd >= 0)
+			close(core->listen_fd);
+		core->listen_fd = -1;
+		ret = bind_listener(core, 0);
+	}
+	if (ret)
+		logf_(core, PRG_ERR, "Local forward could not be reopened: %s", strerror(-ret));
+	else
+		logf_(core, PRG_INFO, "Local forward reopened on 127.0.0.1:%u", core->local_port);
+	return ret;
+}
+
 static void accept_local(struct occore *core)
 {
 	for (;;) {
 		int one = 1;
 		int fd = accept(core->listen_fd, NULL, NULL);
 		struct conn *c;
-		if (fd < 0)
+		if (fd < 0) {
+			/* A client that gave up in the backlog is not the listener's fault. */
+			if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR || errno == ECONNABORTED)
+				return;
+			logf_(core, PRG_INFO, "Local forward failed (%s)", strerror(errno));
+			reopen_listener(core);
 			return;
+		}
 		set_nonblock(fd);
 		setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
 		setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
@@ -518,11 +558,23 @@ static void *net_thread_main(void *arg)
 		u32_t sleep_ms;
 		int quit;
 
+		int reopen;
+
 		pthread_mutex_lock(&core->lock);
 		quit = core->quit;
+		reopen = core->reopen_requested;
+		core->reopen_requested = 0;
 		pthread_mutex_unlock(&core->lock);
 		if (quit)
 			break;
+		if (reopen) {
+			int ret = reopen_listener(core);
+			pthread_mutex_lock(&core->lock);
+			core->reopen_result = ret;
+			core->reopen_generation++;
+			pthread_cond_broadcast(&core->reopened);
+			pthread_mutex_unlock(&core->lock);
+		}
 
 		apply_net_config(core);
 
@@ -576,8 +628,12 @@ static void *net_thread_main(void *arg)
 		}
 		if (fds[1].revents & POLLIN)
 			tun_input(core);
-		if (fds[2].revents & POLLIN)
+		if (fds[2].revents & (POLLERR | POLLHUP | POLLNVAL)) {
+			logf_(core, PRG_INFO, "Local forward was closed by the system");
+			reopen_listener(core);
+		} else if (fds[2].revents & POLLIN) {
 			accept_local(core);
+		}
 		for (size_t i = 3; i < n; i++) {
 			struct conn *c = fd_conns[i];
 			if (c->dead)
@@ -625,6 +681,7 @@ static void core_free(struct occore *core)
 		close(core->wake_rd);
 	if (core->wake_wr >= 0)
 		close(core->wake_wr);
+	pthread_cond_destroy(&core->reopened);
 	pthread_mutex_destroy(&core->lock);
 	for (size_t i = 0; i < sizeof(core->strings) / sizeof(core->strings[0]); i++)
 		free(core->strings[i]);
@@ -670,6 +727,7 @@ int occore_start(const occore_config *config, occore **out)
 	g_core = core;
 	core->oc_tun_fd = core->net_tun_fd = core->listen_fd = core->wake_rd = core->wake_wr = -1;
 	pthread_mutex_init(&core->lock, NULL);
+	pthread_cond_init(&core->reopened, NULL);
 
 	core->cfg = *config;
 	core->cfg.gateway = own(core, 0, config->gateway);
@@ -757,6 +815,32 @@ uint16_t occore_local_port(const occore *core)
 	return core->local_port;
 }
 
+int occore_reopen_listener(occore *core)
+{
+	struct timespec deadline;
+	unsigned generation;
+	int ret = -ETIMEDOUT;
+
+	clock_gettime(CLOCK_REALTIME, &deadline);
+	deadline.tv_sec += 3;
+
+	pthread_mutex_lock(&core->lock);
+	generation = core->reopen_generation;
+	core->reopen_requested = 1;
+	pthread_mutex_unlock(&core->lock);
+	wake(core);
+
+	pthread_mutex_lock(&core->lock);
+	while (core->reopen_generation == generation && !core->quit) {
+		if (pthread_cond_timedwait(&core->reopened, &core->lock, &deadline) == ETIMEDOUT)
+			break;
+	}
+	if (core->reopen_generation != generation)
+		ret = core->reopen_result;
+	pthread_mutex_unlock(&core->lock);
+	return ret;
+}
+
 void occore_stop(occore *core)
 {
 	char cmd = OC_CMD_CANCEL;
@@ -766,6 +850,7 @@ void occore_stop(occore *core)
 
 	pthread_mutex_lock(&core->lock);
 	core->quit = 1;
+	pthread_cond_broadcast(&core->reopened);
 	pthread_mutex_unlock(&core->lock);
 	wake(core);
 	pthread_join(core->net_thread, NULL);
