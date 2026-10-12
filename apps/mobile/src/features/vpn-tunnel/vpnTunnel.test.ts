@@ -2,6 +2,9 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 vi.mock("expo-secure-store", () => ({}));
 vi.mock("./nativeVpnTunnel", () => ({ nativeVpnTunnel: null }));
+vi.mock("react-native", () => ({
+  AppState: { addEventListener: () => ({ remove: () => {} }) },
+}));
 vi.mock("../../lib/uuid", () => ({ uuidv4: () => "00000000-0000-4000-8000-000000000000" }));
 
 import {

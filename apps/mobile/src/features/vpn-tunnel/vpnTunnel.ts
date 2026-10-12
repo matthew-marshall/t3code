@@ -1,5 +1,6 @@
 import type { ClientCapabilities } from "@t3tools/client-runtime/platform";
 import * as SecureStore from "expo-secure-store";
+import { AppState } from "react-native";
 
 import { uuidv4 } from "../../lib/uuid";
 import type { GpProfile } from "./globalProtect";
@@ -97,6 +98,32 @@ export function rewriteToTunnel(endpoint: DirectEndpoint, localPort: number): Di
 
 let pendingStart: Promise<number> | null = null;
 
+// iOS reclaims a suspended app's listening sockets (Apple TN2277). The VPN reconnects by itself
+// after the phone has been locked, but the tunnel's local forward stays dead, so every connection
+// through it fails until the app is relaunched. After any trip to the background the next
+// connection reopens the forward first. Doing it here rather than on the "active" event means it
+// cannot race the app's own reconnect on returning to the foreground.
+let forwardMayBeReclaimed = false;
+AppState.addEventListener("change", (state) => {
+  if (state === "background") forwardMayBeReclaimed = true;
+});
+
+let pendingReopen: Promise<number> | null = null;
+
+function reopenForward(native: NonNullable<typeof nativeVpnTunnel>, port: number): Promise<number> {
+  if (!native.reopenListener) return Promise.resolve(port);
+  pendingReopen ??= native
+    .reopenListener()
+    .then((result) => {
+      forwardMayBeReclaimed = false;
+      return result.localPort ?? port;
+    })
+    .finally(() => {
+      pendingReopen = null;
+    });
+  return pendingReopen;
+}
+
 /** Starts the tunnel if needed and resolves with its local port. */
 export function ensureVpnTunnel(config: VpnTunnelConfig): Promise<number> {
   const native = nativeVpnTunnel;
@@ -107,7 +134,9 @@ export function ensureVpnTunnel(config: VpnTunnelConfig): Promise<number> {
   }
   const current = native.getState();
   if (current.state === "connected" && current.localPort !== undefined) {
-    return Promise.resolve(current.localPort);
+    return forwardMayBeReclaimed
+      ? reopenForward(native, current.localPort)
+      : Promise.resolve(current.localPort);
   }
   pendingStart ??= native
     .start({
@@ -118,7 +147,11 @@ export function ensureVpnTunnel(config: VpnTunnelConfig): Promise<number> {
       os: config.os,
       ...(config.serverCertPin ? { serverCertPin: config.serverCertPin } : {}),
     })
-    .then((result) => result.localPort)
+    .then((result) => {
+      // A newly started tunnel has a new forward.
+      forwardMayBeReclaimed = false;
+      return result.localPort;
+    })
     .finally(() => {
       pendingStart = null;
     });
