@@ -10,6 +10,8 @@ Object.assign(process.env, repoEnv);
 
 const APP_VARIANT = resolveAppVariant(repoEnv.APP_VARIANT);
 const isIosPersonalTeamBuild = repoEnv.T3CODE_IOS_PERSONAL_TEAM === "1";
+// Adds the GlobalProtect packet tunnel extension. Packet tunnel providers need a paid team.
+const isIosPacketTunnelBuild = repoEnv.T3CODE_IOS_PACKET_TUNNEL === "1";
 const runtimeVersionPolicy =
   process.env.MOBILE_VERSION_POLICY ??
   (APP_VARIANT === "development" ? "appVersion" : "fingerprint");
@@ -264,6 +266,9 @@ const config: ExpoConfig = {
     ],
     entitlements: {
       "keychain-access-groups": [`$(AppIdentifierPrefix)${variant.iosBundleIdentifier}`],
+      ...(isIosPacketTunnelBuild
+        ? { "com.apple.developer.networking.networkextension": ["packet-tunnel-provider"] }
+        : {}),
     },
     infoPlist: {
       UISupportedInterfaceOrientations: [
@@ -478,6 +483,7 @@ const config: ExpoConfig = {
     "./plugins/withAndroidModernAlertDialog.cjs",
     "./plugins/withAndroidPredictiveBackCompat.cjs",
     "./plugins/withAndroidTabletOrientation.cjs",
+    ...(isIosPacketTunnelBuild ? ["./plugins/withPacketTunnelExtension.cjs"] : []),
   ],
   extra: {
     appVariant: APP_VARIANT,

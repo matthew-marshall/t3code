@@ -4,7 +4,8 @@
 #include <stdint.h>
 
 /*
- * occore: a GlobalProtect tunnel that lives entirely inside the app process.
+ * occore: a GlobalProtect tunnel that lives entirely inside the app process, or (packet mode,
+ * see occore_start_packets) inside an iOS packet tunnel extension.
  *
  * libopenconnect talks to the gateway; instead of a tun device its packets go to
  * an in-process lwIP stack, which exposes one TCP port forward:
@@ -47,6 +48,22 @@ typedef struct {
 
 /* Binds the local port and starts the tunnel in the background. Returns 0 or -errno. */
 int occore_start(const occore_config *config, occore **out);
+
+/* The tunnel's address, MTU and up to three DNS servers (empty strings when absent). */
+typedef void (*occore_network_fn)(void *ctx, const char *address, int mtu, const char *dns1,
+				  const char *dns2, const char *dns3);
+
+/*
+ * Packet mode, for an iOS packet tunnel extension: no lwIP and no local forward, so
+ * target_host, target_port and local_port are ignored. The caller moves IP packets between
+ * *packet_fd and the OS. It is a nonblocking AF_UNIX datagram socket; each datagram is one IP
+ * packet after a 4-byte big-endian address family (AF_INET or AF_INET6), in both directions.
+ * on_network is called, from a background thread, when the gateway assigns the tunnel's
+ * settings and again after a reconnect; the state turns OCCORE_CONNECTED after it returns.
+ * The core owns packet_fd and closes it in occore_stop. Returns 0 or -errno.
+ */
+int occore_start_packets(const occore_config *config, occore_network_fn on_network, occore **out,
+			 int *packet_fd);
 
 /* The bound local port (useful when config.local_port was 0). */
 uint16_t occore_local_port(const occore *core);

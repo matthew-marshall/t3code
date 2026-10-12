@@ -9,6 +9,9 @@
  * Packets cross between them over an AF_UNIX datagram socketpair that libopenconnect
  * treats as its tun fd. On Apple platforms openconnect frames tun packets with a
  * 4-byte address family prefix (TUN_HAS_AF_PREFIX), so the net thread adds and strips it.
+ *
+ * Packet mode (occore_start_packets) runs only the oc thread: the caller owns the other end
+ * of the socketpair and moves its packets to and from the OS, with the prefix kept.
  */
 #include "occore.h"
 
@@ -67,6 +70,7 @@ struct net_config {
 
 struct occore {
 	occore_config cfg;
+	occore_network_fn on_network; /* set in packet mode only */
 	char *strings[9];       /* owned copies of cfg strings */
 
 	struct openconnect_info *vpninfo;
@@ -182,6 +186,22 @@ static void oc_setup_tun(void *privdata)
 
 	if (openconnect_get_ip_info(core->vpninfo, &ip, NULL, NULL) || !ip || !ip->addr) {
 		logf_(core, PRG_ERR, "Gateway did not assign an IPv4 address");
+		return;
+	}
+
+	if (core->on_network) {
+		int mtu = ip->mtu > 0 ? ip->mtu : 1400;
+		if (!core->tun_attached) {
+			if (openconnect_setup_tun_fd(core->vpninfo, core->oc_tun_fd)) {
+				logf_(core, PRG_ERR, "openconnect_setup_tun_fd failed");
+				return;
+			}
+			core->tun_attached = 1;
+		}
+		logf_(core, PRG_INFO, "Tunnel address %s, MTU %d", ip->addr, mtu);
+		core->on_network(core->cfg.ctx, ip->addr, mtu, ip->dns[0] ? ip->dns[0] : "",
+				 ip->dns[1] ? ip->dns[1] : "", ip->dns[2] ? ip->dns[2] : "");
+		set_state(core, OCCORE_CONNECTED, ip->addr);
 		return;
 	}
 
@@ -708,15 +728,18 @@ static int bind_listener(struct occore *core, uint16_t port)
 	return 0;
 }
 
-int occore_start(const occore_config *config, occore **out)
+static int start(const occore_config *config, occore_network_fn on_network, occore **out,
+		 int *packet_fd)
 {
 	struct occore *core;
 	int pair[2], wake_pipe[2], ret;
 	static int lwip_ready;
+	int packets = on_network != NULL;
 
 	if (g_core)
 		return -EBUSY;
-	if (!config->gateway || !config->cookie || !config->target_host || !config->target_port)
+	if (!config->gateway || !config->cookie ||
+	    (!packets && (!config->target_host || !config->target_port)))
 		return -EINVAL;
 
 	signal(SIGPIPE, SIG_IGN);
@@ -739,8 +762,9 @@ int occore_start(const occore_config *config, occore **out)
 	core->cfg.user_agent = own(core, 6, config->user_agent ? config->user_agent : "PAN GlobalProtect");
 	core->cfg.local_hostname = own(core, 7, config->local_hostname);
 	core->cfg.target_host = own(core, 8, config->target_host);
+	core->on_network = on_network;
 
-	if ((ret = bind_listener(core, config->local_port)))
+	if (!packets && (ret = bind_listener(core, config->local_port)))
 		goto fail;
 	if (socketpair(AF_UNIX, SOCK_DGRAM, 0, pair) || pipe(wake_pipe)) {
 		ret = -errno;
@@ -754,7 +778,7 @@ int occore_start(const occore_config *config, occore **out)
 	set_nonblock(core->wake_rd);
 	set_nonblock(core->wake_wr);
 
-	if (!lwip_ready) {
+	if (!packets && !lwip_ready) {
 		lwip_init();
 		lwip_ready = 1;
 	}
@@ -791,6 +815,13 @@ int occore_start(const occore_config *config, occore **out)
 		goto fail;
 	}
 
+	if (packets) {
+		if ((ret = -pthread_create(&core->oc_thread, NULL, oc_thread_main, core)))
+			goto fail;
+		*packet_fd = core->net_tun_fd;
+		*out = core;
+		return 0;
+	}
 	if ((ret = -pthread_create(&core->net_thread, NULL, net_thread_main, core)))
 		goto fail;
 	if ((ret = -pthread_create(&core->oc_thread, NULL, oc_thread_main, core))) {
@@ -810,6 +841,19 @@ fail:
 	return ret < 0 ? ret : -EIO;
 }
 
+int occore_start(const occore_config *config, occore **out)
+{
+	return start(config, NULL, out, NULL);
+}
+
+int occore_start_packets(const occore_config *config, occore_network_fn on_network, occore **out,
+			 int *packet_fd)
+{
+	if (!on_network || !packet_fd)
+		return -EINVAL;
+	return start(config, on_network, out, packet_fd);
+}
+
 uint16_t occore_local_port(const occore *core)
 {
 	return core->local_port;
@@ -821,6 +865,8 @@ int occore_reopen_listener(occore *core)
 	unsigned generation;
 	int ret = -ETIMEDOUT;
 
+	if (core->on_network)
+		return -EINVAL; /* packet mode has no local forward */
 	clock_gettime(CLOCK_REALTIME, &deadline);
 	deadline.tv_sec += 3;
 
@@ -847,6 +893,11 @@ void occore_stop(occore *core)
 
 	(void)!write(core->cmd_fd, &cmd, 1);
 	pthread_join(core->oc_thread, NULL);
+
+	if (core->on_network) {
+		core_free(core);
+		return;
+	}
 
 	pthread_mutex_lock(&core->lock);
 	core->quit = 1;
