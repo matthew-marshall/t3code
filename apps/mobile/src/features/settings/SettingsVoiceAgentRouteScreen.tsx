@@ -5,6 +5,7 @@ import {
   type VoiceAgentPace,
   type VoiceAgentProviderId,
 } from "@t3tools/contracts";
+import type { VoiceDictationMode } from "@t3tools/client-runtime/voice-agent";
 import { AsyncResult } from "effect/reactivity";
 import { shareAsync } from "expo-sharing";
 import { Alert, Linking, Pressable, ScrollView } from "react-native";
@@ -20,6 +21,16 @@ import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsControlRow } from "./components/SettingsControlRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
+
+const DICTATION_MODE_LABELS: Record<VoiceDictationMode, string> = {
+  "gemini-batch": "Gemini",
+  "on-device": "On device",
+};
+
+const DICTATION_MODE_SUBTITLES: Record<VoiceDictationMode, string> = {
+  "gemini-batch": "Transcribed by Gemini at the end, without filler words",
+  "on-device": "Free and offline, less accurate",
+};
 
 const PACE_LABELS: Record<VoiceAgentPace, string> = {
   slow: "Slow",
@@ -182,6 +193,7 @@ export function SettingsVoiceAgentRouteScreen() {
       providerId === "openai" ? { voiceAgentOpenAIVoice: next } : { voiceAgentVoice: next },
     );
   const pace = preferences?.voiceAgentPace ?? "normal";
+  const dictationMode = preferences?.voiceAgentDictationMode ?? "gemini-batch";
 
   return (
     <ScrollView
@@ -253,6 +265,28 @@ export function SettingsVoiceAgentRouteScreen() {
               }}
             >
               <MenuValue label="Speaking pace" value={PACE_LABELS[pace]} disabled={!ready} />
+            </ControlPillMenu>
+          </SettingsControlRow>
+          <SettingsControlRow icon="text.alignleft" label="Dictation">
+            <ControlPillMenu
+              actions={(["gemini-batch", "on-device"] as const).map((candidate) => ({
+                id: candidate,
+                title: DICTATION_MODE_LABELS[candidate],
+                subtitle: DICTATION_MODE_SUBTITLES[candidate],
+                state: dictationMode === candidate ? ("on" as const) : ("off" as const),
+              }))}
+              onPressAction={({ nativeEvent }) => {
+                const next = nativeEvent.event;
+                if (next === "gemini-batch" || next === "on-device") {
+                  savePreferences({ voiceAgentDictationMode: next });
+                }
+              }}
+            >
+              <MenuValue
+                label="Dictation"
+                value={DICTATION_MODE_LABELS[dictationMode]}
+                disabled={!ready}
+              />
             </ControlPillMenu>
           </SettingsControlRow>
         </SettingsSection>

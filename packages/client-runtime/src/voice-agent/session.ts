@@ -3,6 +3,12 @@ import type { VoiceAgentPace, VoiceAgentProviderId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 import {
+  endsWithStopPhrase,
+  stripStopPhrases,
+  type VoiceDictationMode,
+  type VoiceDictationStore,
+} from "./dictation.ts";
+import {
   LIVE_OUTPUT_SAMPLE_RATE,
   type VoiceAgentFunctionDeclaration,
   type VoiceAgentMode,
@@ -59,6 +65,21 @@ export type VoiceAgentLogEvent =
     }
   | { readonly type: "tool-cancelled"; readonly ids: ReadonlyArray<string> }
   | { readonly type: "update"; readonly text: string }
+  | {
+      readonly type: "dictation-start";
+      readonly origin: "button" | "agent";
+      readonly mode: VoiceDictationMode;
+    }
+  | {
+      readonly type: "dictation";
+      readonly id: string;
+      readonly text: string;
+      readonly endedBy: VoiceDictationEnd;
+      readonly seconds: number;
+      /** What on-device speech heard, kept when Gemini transcribed the recording. */
+      readonly onDevice?: string;
+    }
+  | { readonly type: "dictation-error"; readonly message: string }
   /** The provider rejected one request; the session went on. */
   | { readonly type: "provider-error"; readonly message: string }
   | { readonly type: "error"; readonly message: string }
@@ -67,7 +88,17 @@ export type VoiceAgentLogEvent =
 /** The step a starting session is on, so the control can show progress instead of a spinner. */
 export type VoiceAgentProgress = "token" | "connecting" | "setup" | "microphone";
 
-export type VoiceTranscriptRole = "user" | "agent" | "tool" | "update";
+export type VoiceTranscriptRole = "user" | "agent" | "tool" | "update" | "dictation";
+
+/** "remote" is a play/pause button: a steering wheel, headphones or the lock screen. */
+export type VoiceDictationEnd = "button" | "phrase" | "remote" | "limit";
+
+/** A dictation in progress: recording until the button or "stop dictation", then transcribing. */
+export interface VoiceDictationState {
+  readonly phase: "recording" | "transcribing";
+  /** The phrase on-device speech is hearing now. */
+  readonly heard: string;
+}
 
 export interface VoiceTranscriptEntry {
   readonly id: number;
@@ -86,6 +117,7 @@ export interface VoiceAgentState {
   readonly transcript: ReadonlyArray<VoiceTranscriptEntry>;
   readonly error: string | null;
   readonly progress: VoiceAgentProgress | null;
+  readonly dictation: VoiceDictationState | null;
 }
 
 /** An open WebSocket. Each platform wraps its own; message data may be text or binary. */
@@ -116,6 +148,31 @@ export interface VoiceAgentAudio {
   play(base64Pcm: string): void;
   /** Drops queued speech when the user interrupts the agent. */
   clearPlayback(): void;
+  /** Dictation needs these; a platform without them cannot dictate. */
+  playChime?(kind: "start" | "end"): void;
+  /**
+   * On-device speech over the captured microphone. `onText` gets the phrase being spoken, as it
+   * changes; a pause starts a new one.
+   */
+  startPhraseListener?(
+    locale: string,
+    onText: (text: string, isFinal: boolean) => void,
+  ): Promise<void>;
+  /** Stops listening and resolves with the full on-device transcript. */
+  stopPhraseListener?(): Promise<string>;
+  /**
+   * Routes play/pause presses (steering wheel, headphones, lock screen) to `onPress` while a
+   * dictation runs; null hands them back.
+   */
+  setRemoteControl?(onPress: (() => void) | null): void;
+  /** Records the captured microphone to a compressed file. */
+  startRecordingFile?(): Promise<void>;
+  stopRecordingFile?(): Promise<VoiceRecording | null>;
+}
+
+export interface VoiceRecording {
+  readonly uri: string;
+  readonly mimeType: string;
 }
 
 /** A tool the agent can call. `run` resolves with what the agent is told; a thrown error is reported as one. */
@@ -152,6 +209,13 @@ export interface VoiceAgentSessionDependencies {
   readonly onStateChange: (state: VoiceAgentState) => void;
   /** Receives every `VoiceAgentLogEvent`; the client decides where the log goes. */
   readonly onEvent?: (event: VoiceAgentLogEvent) => void;
+  readonly dictation?: {
+    readonly store: VoiceDictationStore;
+    /** Read when each dictation starts. */
+    readonly mode: () => VoiceDictationMode;
+    /** Gemini 3.5 Transcribe for "gemini-batch"; the recording can be deleted afterwards. */
+    readonly transcribeRecording: (recording: VoiceRecording) => Promise<string>;
+  };
 }
 
 const TRANSCRIPT_LIMIT = 40;
@@ -160,6 +224,10 @@ const MAX_RECONNECTS = 3;
 const PLAYBACK_MARGIN_MS = 500;
 /** A tool still running after this is reported as unknown, so the agent never waits on it forever. */
 const TOOL_TIMEOUT_MS = 30_000;
+/** "Stop dictation" counts once nothing follows it for this long, so it can be said mid-sentence. */
+const STOP_PHRASE_PAUSE_MS = 750;
+/** Dictation finishes by itself after this long, in case the end was missed. */
+const DICTATION_LIMIT_MS = 30 * 60 * 1000;
 /** An update waits at most this long for a quiet moment, in case a turn never reports done. */
 const UPDATE_MAX_WAIT_MS = 20_000;
 
@@ -191,6 +259,7 @@ const initialVoiceAgentState = (mode: VoiceAgentMode): VoiceAgentState => ({
   transcript: [],
   error: null,
   progress: null,
+  dictation: null,
 });
 
 const RECAP_ENTRIES = 12;
@@ -199,6 +268,7 @@ const RECAP_SPEAKERS: Record<VoiceTranscriptRole, string | null> = {
   user: "User",
   agent: "You",
   update: "App update",
+  dictation: "User (dictated)",
   tool: null,
 };
 
@@ -249,6 +319,11 @@ export class VoiceAgentSessionController {
   private sendingSpeech = false;
   private preRoll: Array<string> = [];
   private quietChunks = 0;
+  /** The agent asked for dictation; it starts once the agent is quiet. */
+  private dictationRequested = false;
+  private dictationStartedAt = 0;
+  private dictationLimit: ReturnType<typeof setTimeout> | null = null;
+  private stopPhraseTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(deps: VoiceAgentSessionDependencies, mode: VoiceAgentMode) {
     this.deps = deps;
@@ -277,6 +352,7 @@ export class VoiceAgentSessionController {
     this.closeSocket();
     this.resumptionHandle = null;
     this.dropQueuedUpdates();
+    void this.abandonDictation();
     this.update({
       phase: "idle",
       talking: false,
@@ -371,15 +447,184 @@ export class VoiceAgentSessionController {
   private deliverUpdatesWhenQuiet(): void {
     if (this.updateTimer !== null) clearTimeout(this.updateTimer);
     this.updateTimer = null;
-    if (this.queuedUpdates.length === 0) return;
-    // Each of these ends with a call back here: the turn completing, `endTalking`, or the tools.
+    if (this.queuedUpdates.length === 0 && !this.dictationRequested) return;
+    // Each of these ends with a call back here: the turn completing, `endTalking`, the tools, or
+    // a dictation finishing.
+    if (this.state.dictation !== null) return;
     if (this.turnUnderway || this.state.talking || this.state.runningTools.length > 0) return;
     const playing = this.speechEndsAt - nowMs();
     if (playing > 0) {
       this.updateTimer = setTimeout(() => this.deliverUpdatesWhenQuiet(), playing);
       return;
     }
+    if (this.dictationRequested) {
+      void this.beginDictation("agent");
+      return;
+    }
     this.deliverUpdates();
+  }
+
+  /** Whether this platform can dictate: on-device speech and recording are both needed. */
+  canDictate(): boolean {
+    const audio = this.deps.audio;
+    return (
+      this.deps.dictation !== undefined &&
+      audio.startPhraseListener !== undefined &&
+      audio.stopPhraseListener !== undefined &&
+      audio.startRecordingFile !== undefined &&
+      audio.stopRecordingFile !== undefined
+    );
+  }
+
+  /** The dictation button: starts now, cutting off the agent if it is talking. */
+  startDictation(): void {
+    if (this.state.phase !== "live" || this.state.dictation !== null || !this.canDictate()) return;
+    void this.beginDictation("button");
+  }
+
+  /**
+   * The agent's start_dictation tool: starts once the agent has finished speaking, so its "go
+   * ahead" is not cut off. Returns what the agent is told.
+   */
+  requestDictation(): string {
+    if (!this.canDictate()) return "Dictation is not available on this device.";
+    if (this.state.dictation !== null) return "A dictation is already in progress.";
+    this.dictationRequested = true;
+    this.deliverUpdatesWhenQuiet();
+    return 'Dictation starts with a chime once you stop speaking: say "Go ahead" or similar, briefly. Do not speak again until a [T3 dictation] message arrives.';
+  }
+
+  /** The dictation button again, or "stop dictation": stops recording and transcribes. */
+  finishDictation(endedBy: VoiceDictationEnd = "button"): void {
+    if (this.state.dictation?.phase !== "recording") return;
+    void this.completeDictation(endedBy);
+  }
+
+  private async beginDictation(origin: "button" | "agent"): Promise<void> {
+    const dictation = this.deps.dictation;
+    const audio = this.deps.audio;
+    this.dictationRequested = false;
+    if (!dictation || !audio.startPhraseListener || !audio.startRecordingFile) return;
+    const mode = dictation.mode();
+    // The agent stays silent while the user dictates.
+    audio.clearPlayback();
+    this.speechEndsAt = 0;
+    this.update({ agentSpeaking: false, dictation: { phase: "recording", heard: "" } });
+    this.log({ type: "dictation-start", origin, mode });
+    audio.playChime?.("start");
+    this.dictationStartedAt = nowMs();
+    this.dictationLimit = setTimeout(() => this.finishDictation("limit"), DICTATION_LIMIT_MS);
+    audio.setRemoteControl?.(() => this.finishDictation("remote"));
+    try {
+      await audio.startPhraseListener(this.deps.language, (text) => {
+        if (this.state.dictation?.phase !== "recording") return;
+        this.update({ dictation: { phase: "recording", heard: text } });
+        // Any new words cancel a pending stop: the phrase was part of a sentence.
+        this.clearStopPhraseTimer();
+        if (endsWithStopPhrase(text)) {
+          this.stopPhraseTimer = setTimeout(
+            () => this.finishDictation("phrase"),
+            STOP_PHRASE_PAUSE_MS,
+          );
+        }
+      });
+      if (mode === "gemini-batch") await audio.startRecordingFile();
+    } catch (error) {
+      await this.abandonDictation();
+      this.dictationFailed(describeError(error));
+    }
+  }
+
+  private async completeDictation(endedBy: VoiceDictationEnd): Promise<void> {
+    const dictation = this.deps.dictation;
+    const audio = this.deps.audio;
+    if (!dictation) return;
+    this.clearDictationLimit();
+    audio.setRemoteControl?.(null);
+    const heard = this.state.dictation?.heard ?? "";
+    this.update({ dictation: { phase: "transcribing", heard } });
+    audio.playChime?.("end");
+    const mode = dictation.mode();
+    let onDevice = heard;
+    let text = "";
+    try {
+      onDevice = (await audio.stopPhraseListener?.()) || heard;
+      const recording = await audio.stopRecordingFile?.();
+      text = onDevice;
+      if (mode === "gemini-batch" && recording) {
+        try {
+          text = await dictation.transcribeRecording(recording);
+        } catch (error) {
+          // The on-device transcript is less polished, but it is what the user said.
+          this.log({
+            type: "dictation-error",
+            message: `Gemini could not transcribe the dictation; kept the on-device transcript. ${describeError(error)}`,
+          });
+        }
+      }
+    } catch (error) {
+      this.update({ dictation: null });
+      this.dictationFailed(describeError(error));
+      return;
+    }
+    text = stripStopPhrases(text);
+    const seconds = Math.round((nowMs() - this.dictationStartedAt) / 1000);
+    this.update({ dictation: null });
+    // Recording resumes on the next chunk; the hands-free gate starts over.
+    this.sendingSpeech = false;
+    this.preRoll = [];
+    this.quietChunks = 0;
+    if (text === "") {
+      this.dictationFailed("Nothing was heard in the dictation.");
+      return;
+    }
+    const saved = dictation.store.add(text, nowMs());
+    this.log({
+      type: "dictation",
+      id: saved.id,
+      text,
+      endedBy,
+      seconds,
+      ...(mode === "gemini-batch" ? { onDevice: stripStopPhrases(onDevice) } : {}),
+    });
+    this.appendTranscript("dictation", text);
+    this.connection?.sendText(
+      [
+        `[T3 dictation ${saved.id}] The user dictated:`,
+        `"""${text}"""`,
+        `Unless it is already clear what to do with it, briefly ask. To send it as a message or start a thread with it, pass dictationId "${saved.id}" instead of retyping it.`,
+      ].join("\n"),
+    );
+    this.deliverUpdatesWhenQuiet();
+  }
+
+  /** Tells the agent a dictation failed, so it can say so. */
+  private dictationFailed(message: string): void {
+    this.log({ type: "dictation-error", message });
+    this.connection?.sendText(`[T3 update] The dictation failed: ${message}`);
+    this.deliverUpdatesWhenQuiet();
+  }
+
+  /** Stops listening and recording without keeping anything, as when the session ends. */
+  private async abandonDictation(): Promise<void> {
+    this.dictationRequested = false;
+    this.clearDictationLimit();
+    this.deps.audio.setRemoteControl?.(null);
+    if (this.state.dictation === null) return;
+    this.update({ dictation: null });
+    await this.deps.audio.stopPhraseListener?.().catch(() => "");
+    await this.deps.audio.stopRecordingFile?.().catch(() => null);
+  }
+
+  private clearDictationLimit(): void {
+    if (this.dictationLimit !== null) clearTimeout(this.dictationLimit);
+    this.dictationLimit = null;
+    this.clearStopPhraseTimer();
+  }
+
+  private clearStopPhraseTimer(): void {
+    if (this.stopPhraseTimer !== null) clearTimeout(this.stopPhraseTimer);
+    this.stopPhraseTimer = null;
   }
 
   private deliverUpdates(): void {
@@ -508,6 +753,8 @@ export class VoiceAgentSessionController {
         this.update({ agentSpeaking: false });
         return;
       case "audio":
+        // The agent stays silent while the user dictates.
+        if (this.state.dictation !== null) return;
         this.turnUnderway = true;
         this.deps.audio.play(event.data);
         this.speechEndsAt =
@@ -652,6 +899,8 @@ export class VoiceAgentSessionController {
 
   private captured(chunk: string, level: number): void {
     if (this.state.phase !== "live") return;
+    // Dictation listens and records natively; none of it reaches the agent.
+    if (this.state.dictation !== null) return;
     if (this.state.mode === "push-to-talk") {
       if (this.state.talking) this.connection?.sendAudio(chunk);
       return;
@@ -706,6 +955,7 @@ export class VoiceAgentSessionController {
   private fail(error: string): void {
     this.log({ type: "error", message: error });
     this.dropQueuedUpdates();
+    void this.abandonDictation();
     this.update({
       phase: "error",
       error,

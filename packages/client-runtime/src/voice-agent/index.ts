@@ -29,12 +29,16 @@ export {
   type VoiceAgentSpeech,
   type VoiceAgentState,
   type VoiceAgentTool,
+  type VoiceDictationEnd,
+  type VoiceDictationState,
+  type VoiceRecording,
   type VoiceTranscriptEntry,
   type VoiceTranscriptRole,
 } from "./session.ts";
 export {
   VOICE_AGENT_INSTRUCTIONS,
   createVoiceAgentTools,
+  type VoiceAgentDictationTools,
   type VoiceAgentWorkspace,
 } from "./tools.ts";
 export { createVoiceAgentWorkspace, type VoiceAgentWorkspaceSources } from "./workspace.ts";
@@ -44,3 +48,9 @@ export {
   type VoiceThreadShell,
   type VoiceThreadSnapshots,
 } from "./threadUpdates.ts";
+export {
+  STOP_DICTATION_PHRASES,
+  type VoiceDictation,
+  type VoiceDictationMode,
+  VoiceDictationStore,
+} from "./dictation.ts";

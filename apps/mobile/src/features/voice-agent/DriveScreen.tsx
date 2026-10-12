@@ -9,10 +9,14 @@ import { useVoiceAgentState } from "./VoiceAgentPanel";
 import { stopVoiceAgent, toggleVoiceAgent, voiceAgentController } from "./voiceAgentSession";
 
 const BUTTON_MAX = 320;
+/** Enough of what was heard to see dictation is working, without reading while driving. */
+const HEARD_CHARS = 160;
 
 /**
  * The Drive tab: one target large enough to hit without looking. It starts and ends voice; in
- * push-to-talk it is held while speaking, with a separate control to end.
+ * push-to-talk it is held while speaking, with a separate control to end. While voice is on,
+ * Dictate records until it is pressed again, the user says "stop dictation", or a play/pause
+ * button (steering wheel, headphones) is pressed.
  */
 export function DriveScreen() {
   const state = useVoiceAgentState();
@@ -20,19 +24,32 @@ export function DriveScreen() {
   const { width, height } = useWindowDimensions();
   const size = Math.min(BUTTON_MAX, width * 0.7, height * 0.4);
   const active = state.phase === "live" || state.phase === "connecting";
-  const holdToTalk = state.mode === "push-to-talk" && state.phase === "live";
+  const dictation = state.dictation;
+  const holdToTalk = state.mode === "push-to-talk" && state.phase === "live" && dictation === null;
 
   const label =
-    state.phase === "error"
-      ? "Tap to try again"
-      : !active
-        ? "Tap to talk"
-        : holdToTalk
-          ? state.talking
-            ? "Listening…"
-            : "Hold to talk"
-          : voiceAgentStatus(state);
-  const lit = state.talking || (active && !holdToTalk && state.phase === "live");
+    dictation?.phase === "recording"
+      ? "Finish dictation"
+      : dictation?.phase === "transcribing"
+        ? "Transcribing…"
+        : state.phase === "error"
+          ? "Tap to try again"
+          : !active
+            ? "Tap to talk"
+            : holdToTalk
+              ? state.talking
+                ? "Listening…"
+                : "Hold to talk"
+              : voiceAgentStatus(state);
+  const lit =
+    dictation !== null || state.talking || (active && !holdToTalk && state.phase === "live");
+  const onPress =
+    dictation?.phase === "recording"
+      ? () => voiceAgentController.finishDictation()
+      : dictation !== null || holdToTalk
+        ? undefined
+        : toggleVoiceAgent;
+  const heard = dictation?.heard.trim() ?? "";
 
   return (
     <View
@@ -41,19 +58,27 @@ export function DriveScreen() {
     >
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={holdToTalk ? "Hold to talk" : active ? "End voice" : "Start voice"}
-        accessibilityState={{ selected: active }}
+        accessibilityLabel={
+          dictation !== null
+            ? label
+            : holdToTalk
+              ? "Hold to talk"
+              : active
+                ? "End voice"
+                : "Start voice"
+        }
+        accessibilityState={{ selected: active, disabled: dictation?.phase === "transcribing" }}
         className={cn(
           "items-center justify-center gap-3 rounded-full active:opacity-80",
           lit ? "bg-primary" : "bg-subtle-strong",
         )}
         style={{ width: size, height: size }}
-        onPress={holdToTalk ? undefined : toggleVoiceAgent}
+        onPress={onPress}
         onPressIn={holdToTalk ? () => voiceAgentController.beginTalking() : undefined}
         onPressOut={holdToTalk ? () => voiceAgentController.endTalking() : undefined}
       >
         <SymbolView
-          name={active && !holdToTalk ? "stop.fill" : "mic"}
+          name={dictation !== null || (active && !holdToTalk) ? "stop.fill" : "mic"}
           size={size * 0.28}
           tintColorClassName={lit ? "accent-primary-foreground" : "accent-icon"}
           type="monochrome"
@@ -69,10 +94,33 @@ export function DriveScreen() {
           {label}
         </Text>
       </Pressable>
+      {dictation?.phase === "recording" ? (
+        <Text className="text-center text-base text-foreground-muted" numberOfLines={3}>
+          {heard === ""
+            ? "Say “stop dictation” or press play/pause when you are done."
+            : `…${heard.slice(-HEARD_CHARS)}`}
+        </Text>
+      ) : null}
       {state.phase === "error" ? (
         <Text className="text-center text-base text-danger-foreground" numberOfLines={3}>
           {state.error}
         </Text>
+      ) : null}
+      {state.phase === "live" && dictation === null && voiceAgentController.canDictate() ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityHint="Records until you press Finish or say stop dictation"
+          className="h-16 min-w-56 flex-row items-center justify-center gap-2 rounded-full bg-subtle px-8 active:opacity-70"
+          onPress={() => voiceAgentController.startDictation()}
+        >
+          <SymbolView
+            name="text.alignleft"
+            size={20}
+            tintColorClassName="accent-icon"
+            type="monochrome"
+          />
+          <Text className="text-lg font-t3-medium text-foreground">Dictate</Text>
+        </Pressable>
       ) : null}
       {holdToTalk ? (
         <Pressable

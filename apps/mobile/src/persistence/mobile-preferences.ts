@@ -16,7 +16,7 @@ import {
   type VoiceAgentPace,
   type VoiceAgentProviderId,
 } from "@t3tools/contracts";
-import type { VoiceAgentMode } from "@t3tools/client-runtime/voice-agent";
+import type { VoiceAgentMode, VoiceDictationMode } from "@t3tools/client-runtime/voice-agent";
 import type { ComposerEnterBehavior } from "../lib/composerEnterBehavior";
 import type { FollowUpBehavior } from "../lib/followUpBehavior";
 import { isMicrophoneKind, type MicrophoneEntry } from "../lib/microphonePriority";
@@ -88,6 +88,8 @@ export interface Preferences {
   readonly voiceAgentVoice?: string;
   /** An OpenAI Realtime voice; empty uses OpenAI's default. */
   readonly voiceAgentOpenAIVoice?: string;
+  /** How voice dictation is transcribed; Gemini after the recording by default. */
+  readonly voiceAgentDictationMode?: VoiceDictationMode;
   readonly voiceAgentPace?: VoiceAgentPace;
   readonly voiceAgentMode?: VoiceAgentMode;
   /** @deprecated Kept temporarily so older OTA bundles retain the selected mode. */
@@ -172,6 +174,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     voiceAgentProvider?: VoiceAgentProviderId;
     voiceAgentVoice?: string;
     voiceAgentOpenAIVoice?: string;
+    voiceAgentDictationMode?: VoiceDictationMode;
     voiceAgentPace?: VoiceAgentPace;
     voiceAgentMode?: VoiceAgentMode;
     projectGroupingEnabled?: boolean;
@@ -276,6 +279,12 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.voiceAgentOpenAIVoice === "string") {
     preferences.voiceAgentOpenAIVoice = parsed.voiceAgentOpenAIVoice;
+  }
+  if (
+    parsed.voiceAgentDictationMode === "gemini-batch" ||
+    parsed.voiceAgentDictationMode === "on-device"
+  ) {
+    preferences.voiceAgentDictationMode = parsed.voiceAgentDictationMode;
   }
   if (
     parsed.voiceAgentPace === "slow" ||

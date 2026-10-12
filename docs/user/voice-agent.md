@@ -48,6 +48,29 @@ you hear the agent through the car. Otherwise it uses a connected headset or
 car microphone in the order set under **Settings → Microphone**. It picks again
 when one connects or disconnects.
 
+## Dictate
+
+When you want to say something long, dictate instead of talking to the agent:
+press **Dictate** on the iPhone **Drive** tab, or ask the agent to start
+dictation. A chime marks the start. Talk for as long as you like; the agent does
+not hear you, does not speak, and holds its updates. To stop, press **Finish
+dictation**, press play/pause on your steering wheel or headphones, or say "stop
+dictation" and pause; a second chime plays.
+
+The agent then gets the transcript and asks what to do with it, unless that is
+already clear. It can send a dictation as a message or start a thread with it
+without retyping it. Ask for "the latest dictation" or one by number.
+
+**Settings → Voice Agent → Dictation** picks how it is transcribed:
+
+- **Gemini**: transcribed at the end by Gemini 3.5 Transcribe, which drops
+  filler words. Uses the Gemini key.
+- **On device**: Apple's speech recognition, free and offline but less accurate.
+
+Either way, Apple's on-device speech listens for the stop phrase. "End
+dictation" works too, but "end" is easily misheard as "and". The first use may
+download Apple's speech model.
+
 ## Good to know
 
 - Before it approves or denies a request, starts a thread, or stops one, the
