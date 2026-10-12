@@ -28,8 +28,9 @@ export function WorkspaceToolbar(props: {
   const searchRef = useRef<SearchBarCommands>(null);
   const tab = workspace.state.tabs[workspace.state.selectedTab];
   const selectedTab = workspace.state.selectedTab;
+  const searchable = selectedTab !== "drive";
   const focusSearch = useCallback(() => {
-    if (!workspace.isTabActive(selectedTab)) return false;
+    if (!searchable || !workspace.isTabActive(selectedTab)) return false;
     workspace.dispatch({
       type: "scroll",
       tab: selectedTab,
@@ -39,7 +40,14 @@ export function WorkspaceToolbar(props: {
     if (props.sidebar && !panes.primarySidebarVisible) togglePrimarySidebar();
     searchRef.current?.focus();
     return true;
-  }, [workspace, selectedTab, props.sidebar, panes.primarySidebarVisible, togglePrimarySidebar]);
+  }, [
+    searchable,
+    workspace,
+    selectedTab,
+    props.sidebar,
+    panes.primarySidebarVisible,
+    togglePrimarySidebar,
+  ]);
   useHardwareKeyboardCommand("focusSearch", focusSearch);
   const restoreSearch = useCallback(() => {
     if (isTabActive(selectedTab) && tab.searchMode !== "resting")
@@ -104,15 +112,21 @@ export function WorkspaceToolbar(props: {
             })
           }
         />
-        <NativeHeaderToolbar.Button
-          accessibilityLabel={
-            selectedTab === "pullRequests" ? "Search pull requests" : "Search threads"
-          }
-          icon="magnifyingglass"
-          onPress={focusSearch}
-        />
+        {searchable ? (
+          <NativeHeaderToolbar.Button
+            accessibilityLabel={
+              selectedTab === "pullRequests" ? "Search pull requests" : "Search threads"
+            }
+            icon="magnifyingglass"
+            onPress={focusSearch}
+          />
+        ) : null}
         {voiceAgent.visible ? (
           <NativeHeaderToolbar.Button
+            identifier="workspace-voice-agent"
+            // Its own glass pill rather than a slot in the search/settings group: taps near the
+            // group's edge animated the group without reaching this button.
+            separateBackground
             accessibilityLabel={voiceAgent.active ? "End voice" : "Talk to T3 Code"}
             icon={voiceAgent.active ? "waveform.circle.fill" : "waveform"}
             onPress={voiceAgent.toggle}
