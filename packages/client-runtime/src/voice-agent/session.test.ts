@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { createGeminiVoiceProvider, GEMINI_LIVE_URL } from "./gemini.ts";
 import { voiceAgentStatus } from "./presentation.ts";
 import type { VoiceAgentMode } from "./liveProtocol.ts";
+import { type VoiceDictationMode, VoiceDictationStore } from "./dictation.ts";
 import {
   VoiceAgentSessionController,
   type VoiceAgentSocket,
@@ -68,6 +69,27 @@ function harness(mode: VoiceAgentMode = "hands-free") {
     }),
     play: vi.fn(),
     clearPlayback: vi.fn(),
+    playChime: vi.fn(),
+    startPhraseListener: vi.fn(
+      async (_locale: string, listener: (text: string, isFinal: boolean) => void) => {
+        onSpeech = listener;
+      },
+    ),
+    stopPhraseListener: vi.fn(async () => heard),
+    startRecordingFile: vi.fn(async () => {}),
+    stopRecordingFile: vi.fn(async () => ({ uri: "file:///dictation.m4a", mimeType: "audio/mp4" })),
+    setRemoteControl: vi.fn((onPress: (() => void) | null) => {
+      remotePress = onPress;
+    }),
+  };
+  let onSpeech: ((text: string, isFinal: boolean) => void) | null = null;
+  let remotePress: (() => void) | null = null;
+  let heard = "";
+  const dictations = new VoiceDictationStore();
+  const dictation = {
+    store: dictations,
+    mode: vi.fn((): VoiceDictationMode => "gemini-batch"),
+    transcribeRecording: vi.fn(async () => "Add a retry to the upload, stop dictation."),
   };
   const controller = new VoiceAgentSessionController(
     {
@@ -99,6 +121,7 @@ function harness(mode: VoiceAgentMode = "hands-free") {
         return socket;
       },
       audio,
+      dictation,
       onStateChange: (state) => states.push(state),
       onEvent: (event) => events.push(event),
     },
@@ -121,6 +144,15 @@ function harness(mode: VoiceAgentMode = "hands-free") {
       listThreadsHangs = true;
     },
     audio,
+    dictation,
+    dictations,
+    /** A steering-wheel or headphone play/pause press. */
+    pressRemote: () => remotePress?.(),
+    /** On-device speech hears `text` so far during dictation. */
+    hear: (text: string) => {
+      heard = text;
+      onSpeech?.(text, false);
+    },
     connect,
     // Speech is well above the hands-free threshold unless a test says otherwise.
     speak: (chunk: string, level = -20) => onChunk?.(chunk, level),
@@ -341,6 +373,117 @@ describe("VoiceAgentSessionController", () => {
       { type: "microphone", status: "speech", level: -25 },
       { type: "microphone", status: "paused" },
     ]);
+  });
+
+  describe("dictation", () => {
+    const texts = (socket: FakeSocket) =>
+      socket
+        .sentOf("realtimeInput")
+        .filter((message) => "text" in message.realtimeInput)
+        .map((message) => message.realtimeInput.text as string);
+
+    it("keeps the microphone from the agent until the user says stop dictation, then hands it the transcript", async () => {
+      vi.useFakeTimers();
+      const h = harness();
+      await h.controller.start();
+      const socket = await h.connect();
+      h.controller.startDictation();
+      await flush();
+      expect(h.audio.playChime).toHaveBeenLastCalledWith("start");
+      expect(h.audio.startRecordingFile).toHaveBeenCalled();
+      expect(h.controller.getState().dictation).toMatchObject({ phase: "recording" });
+
+      const audioBefore = socket.sentOf("realtimeInput").length;
+      h.speak("pcm");
+      // The agent neither hears the dictation nor speaks over it.
+      socket.receive({
+        serverContent: { modelTurn: { parts: [{ inlineData: { data: "AAAA" } }] } },
+      });
+      expect(socket.sentOf("realtimeInput")).toHaveLength(audioBefore);
+      expect(h.audio.play).not.toHaveBeenCalled();
+      h.controller.sendUpdate("Fix login finished.");
+
+      h.hear("add a retry to the upload stop dictation");
+      // It waits for a pause after the phrase.
+      expect(h.audio.playChime).toHaveBeenLastCalledWith("start");
+      await vi.advanceTimersByTimeAsync(800);
+      expect(h.audio.playChime).toHaveBeenLastCalledWith("end");
+      expect(h.dictation.transcribeRecording).toHaveBeenCalledWith({
+        uri: "file:///dictation.m4a",
+        mimeType: "audio/mp4",
+      });
+      expect(h.dictations.get("latest")).toMatchObject({
+        id: "d1",
+        text: "Add a retry to the upload",
+      });
+      const [dictated, update] = texts(socket);
+      expect(dictated).toContain("[T3 dictation d1]");
+      expect(dictated).toContain('"""Add a retry to the upload"""');
+      // The held update follows once the dictation is in.
+      expect(update).toBe("[T3 update] Fix login finished.");
+      expect(h.controller.getState().dictation).toBeNull();
+      vi.useRealTimers();
+    });
+
+    it("ignores stop dictation said mid-sentence, and finishes on a play/pause press", async () => {
+      vi.useFakeTimers();
+      try {
+        const h = harness();
+        await h.controller.start();
+        await h.connect();
+        h.controller.startDictation();
+        await vi.advanceTimersByTimeAsync(0);
+        h.hear("we should stop dictation");
+        await vi.advanceTimersByTimeAsync(300);
+        h.hear("we should stop dictation from cutting off");
+        await vi.advanceTimersByTimeAsync(2_000);
+        expect(h.controller.getState().dictation).toMatchObject({ phase: "recording" });
+
+        h.pressRemote();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(h.dictations.get("latest")).toBeTruthy();
+        expect(h.events.find((event) => event.type === "dictation")).toMatchObject({
+          endedBy: "remote",
+        });
+        expect(h.audio.setRemoteControl).toHaveBeenLastCalledWith(null);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("starts an agent-requested dictation only once the agent has finished speaking", async () => {
+      vi.useFakeTimers();
+      try {
+        const h = harness();
+        await h.controller.start();
+        const socket = await h.connect();
+        socket.receive({
+          serverContent: { modelTurn: { parts: [{ inlineData: { data: "AAAA" } }] } },
+        });
+        expect(h.controller.requestDictation()).toContain("Go ahead");
+        expect(h.audio.startPhraseListener).not.toHaveBeenCalled();
+        socket.receive({ serverContent: { turnComplete: true } });
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(h.audio.startPhraseListener).toHaveBeenCalled();
+        expect(h.audio.playChime).toHaveBeenLastCalledWith("start");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("keeps the on-device transcript when Gemini cannot transcribe the recording", async () => {
+      const h = harness();
+      await h.controller.start();
+      await h.connect();
+      h.dictation.transcribeRecording.mockRejectedValueOnce(new Error("rate limited"));
+      h.controller.startDictation();
+      await flush();
+      h.hear("um call the client tomorrow");
+      h.controller.finishDictation();
+      await flush();
+      expect(h.dictations.get("d1")?.text).toBe("um call the client tomorrow");
+      expect(h.events.some((event) => event.type === "dictation-error")).toBe(true);
+    });
   });
 
   it("holds app updates until the agent has finished speaking, so they never cut it off", async () => {

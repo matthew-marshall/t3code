@@ -1,5 +1,7 @@
 import AVFoundation
 import ExpoModulesCore
+import MediaPlayer
+import Speech
 import os
 
 private let playbackSampleRate = 24_000.0
@@ -71,9 +73,22 @@ public final class T3VoiceAudioModule: Module {
   private let playbackFormat = AVAudioFormat(
     commonFormat: .pcmFormatFloat32, sampleRate: playbackSampleRate, channels: 1, interleaved: false)!
 
+  /// Dictation's phrase listener and recording, which get every converted capture buffer while
+  /// either is running. They outlive engine rebuilds. Owned by `dictationQueue`, which never
+  /// waits on `queue`.
+  private let dictationQueue = DispatchQueue(label: "t3.voice-audio.dictation")
+  private var listener: PhraseListener?
+  /// A stopped listener settling its last words, for `stopSpeechListener` to collect.
+  private var listenerFinish: Task<String, Never>?
+  private var recording: AudioRecording?
+  /// A recording `stop` closed before `stopRecording` collected it.
+  private var finishedRecording: [String: Any]?
+  /// Whether the tap hands capture to dictation; set on `dictationQueue`, read on the tap thread.
+  private let dictationFeeding = OSAllocatedUnfairLock(initialState: false)
+
   public func definition() -> ModuleDefinition {
     Name("T3VoiceAudio")
-    Events("onCapture", "onInputs", "onError")
+    Events("onCapture", "onInputs", "onError", "onSpeech", "onRemoteCommand")
 
     // Activates the voice session and lists its microphones; iOS lists them only then.
     AsyncFunction("prepare") { () -> [[String: String]] in
@@ -127,9 +142,100 @@ public final class T3VoiceAudioModule: Module {
       }
     }
 
+    // While on, play/pause presses (a steering wheel, headphones, the lock screen) send
+    // `onRemoteCommand` instead of reaching other apps; dictation uses them to finish. Showing a
+    // Now Playing entry is what makes iOS route those presses here.
+    Function("setRemoteControl") { (enabled: Bool) in
+      DispatchQueue.main.async { self.setRemoteControl(enabled) }
+    }
+
+    // "start" or "end" of dictation, on the same route as the agent's voice.
+    Function("playChime") { (kind: String) in
+      self.queue.async { self.playChime(Chime(rawValue: kind) ?? .start) }
+    }
+
+    // On-device recognition of the capture. `onSpeech` carries the current segment's text as it
+    // changes, then once more with `isFinal` when the segment settles; a new segment starts after
+    // a pause. Resolves once recognition is ready, which can include downloading the model.
+    AsyncFunction("startSpeechListener") { (locale: String) async throws in
+      if let previous = self.dictationQueue.sync(execute: { self.detachListener() }) {
+        _ = await previous.value
+      }
+      let onText: (String, Bool) -> Void = { [weak self] text, isFinal in
+        self?.sendEvent("onSpeech", ["text": text, "isFinal": isFinal])
+      }
+      let listener: PhraseListener
+      if #available(iOS 26, *), SpeechTranscriber.isAvailable {
+        listener = try await AnalyzerPhraseListener.start(
+          locale: locale, queue: self.dictationQueue, onText: onText)
+      } else {
+        listener = try await RecognizerPhraseListener.start(
+          locale: locale, queue: self.dictationQueue, onText: onText)
+      }
+      self.dictationQueue.sync {
+        self.listener = listener
+        self.updateDictationFeeding()
+      }
+    }
+
+    // The whole transcript since `startSpeechListener`, settled segments joined by spaces.
+    AsyncFunction("stopSpeechListener") { () async -> String in
+      let finish = self.dictationQueue.sync { () -> Task<String, Never>? in
+        _ = self.detachListener()
+        defer { self.listenerFinish = nil }
+        return self.listenerFinish
+      }
+      return await finish?.value ?? ""
+    }
+
+    AsyncFunction("startRecording") {
+      self.dictationQueue.sync {
+        self.recording?.discard()
+        self.finishedRecording = nil
+        self.recording = AudioRecording()
+        self.updateDictationFeeding()
+      }
+    }
+
+    // `{ uri, mimeType }` of the AAC recording, or nil if nothing was captured.
+    AsyncFunction("stopRecording") { () -> [String: Any]? in
+      self.dictationQueue.sync {
+        self.finishRecording()
+        defer { self.finishedRecording = nil }
+        return self.finishedRecording
+      }
+    }
+
     OnDestroy {
       self.queue.sync { self.stop() }
+      DispatchQueue.main.async { self.setRemoteControl(false) }
     }
+  }
+
+  /// Main thread only, like MPRemoteCommandCenter.
+  private var remoteTargets: [(MPRemoteCommand, Any)] = []
+
+  private func setRemoteControl(_ enabled: Bool) {
+    let center = MPRemoteCommandCenter.shared()
+    for (command, target) in remoteTargets { command.removeTarget(target) }
+    remoteTargets = []
+    guard enabled else {
+      MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+      return
+    }
+    for command in [center.togglePlayPauseCommand, center.pauseCommand, center.playCommand] {
+      command.isEnabled = true
+      let target = command.addTarget { [weak self] _ in
+        self?.sendEvent("onRemoteCommand", ["command": "toggle"])
+        return .success
+      }
+      remoteTargets.append((command, target))
+    }
+    MPNowPlayingInfoCenter.default().nowPlayingInfo = [
+      MPMediaItemPropertyTitle: "Dictating",
+      MPMediaItemPropertyArtist: "T3 Code · press play/pause to finish",
+      MPNowPlayingInfoPropertyPlaybackRate: 1.0,
+    ]
   }
 
   private func activateSession() throws {
@@ -250,6 +356,10 @@ public final class T3VoiceAudioModule: Module {
 
   private func stop() {
     active = false
+    dictationQueue.sync {
+      _ = detachListener()
+      finishRecording()
+    }
     pendingRebuild?.cancel()
     pendingRebuild = nil
     pendingReactivation = .none
@@ -397,6 +507,10 @@ public final class T3VoiceAudioModule: Module {
     guard error == nil, output.frameLength > 0, let samples = output.int16ChannelData else {
       return
     }
+    // Dictation hears the user unsilenced by the echo gate; each tap call makes a new buffer.
+    if dictationFeeding.withLock({ $0 }) {
+      dictationQueue.async { [weak self] in self?.feedDictation(output) }
+    }
     pending.append(UnsafeBufferPointer(start: samples[0], count: Int(output.frameLength)))
     while pending.count >= chunkBytes {
       var chunk = Data(pending.prefix(chunkBytes))
@@ -517,6 +631,57 @@ public final class T3VoiceAudioModule: Module {
       speechStopped()
       Self.logger.notice("Speech buffer ran dry; waiting for more")
     }
+  }
+
+  /// Plays a chime right away, ahead of any speech still buffering. It is counted like speech, so
+  /// the player pauses and the echo gate closes once it and any speech have played; queue only.
+  private func playChime(_ chime: Chime) {
+    guard let player, engine?.isRunning == true, let buffer = chime.buffer(format: playbackFormat)
+    else { return }
+    let generation = playbackGeneration
+    let frames = buffer.frameLength
+    queuedFrames += frames
+    player.scheduleBuffer(buffer) { [weak self] in
+      self?.queue.async { self?.finished(frames, generation: generation) }
+    }
+    guard !playing else { return }
+    prerollDeadline?.cancel()
+    prerollDeadline = nil
+    player.play()
+    playing = true
+    speechStarted()
+  }
+
+  /// Dictation queue only.
+  private func feedDictation(_ buffer: AVAudioPCMBuffer) {
+    recording?.write(buffer)
+    listener?.append(buffer)
+  }
+
+  /// Dictation queue only.
+  private func updateDictationFeeding() {
+    let feeding = listener != nil || recording != nil
+    dictationFeeding.withLock { $0 = feeding }
+  }
+
+  /// Stops feeding the listener and lets it settle in the background; returns that settling.
+  /// Dictation queue only.
+  @discardableResult
+  private func detachListener() -> Task<String, Never>? {
+    if let listener {
+      self.listener = nil
+      updateDictationFeeding()
+      listenerFinish = Task { await listener.finish() }
+    }
+    return listenerFinish
+  }
+
+  /// Closes the recording and keeps its result for `stopRecording`; dictation queue only.
+  private func finishRecording() {
+    guard let recording else { return }
+    self.recording = nil
+    updateDictationFeeding()
+    finishedRecording = recording.finish()
   }
 
   private func resetPlayback() {

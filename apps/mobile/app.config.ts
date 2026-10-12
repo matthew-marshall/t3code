@@ -276,6 +276,9 @@ const config: ExpoConfig = {
       NSLocalNetworkUsageDescription:
         "Allow T3 Code to connect to T3 Code servers on your local network or tailnet.",
       NSPhotoLibraryAddUsageDescription: "Allow T3 Code to save images to your photo library.",
+      // Dictation's on-device phrase listener uses SFSpeechRecognizer before iOS 26.
+      NSSpeechRecognitionUsageDescription:
+        "Allow T3 Code to recognize your speech on this device while you dictate.",
       // "Audio, AirPlay, and Picture in Picture": the browser screen's system
       // picture in picture needs it to start and to stay up outside the app.
       UIBackgroundModes: ["audio"],

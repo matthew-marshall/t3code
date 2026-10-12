@@ -17,6 +17,16 @@ interface T3VoiceAudioModule {
   stop(): Promise<void>;
   play(base64Pcm: string): void;
   clearPlayback(): void;
+  playChime(kind: "start" | "end"): void;
+  /** While on, play/pause presses send `onRemoteCommand`. */
+  setRemoteControl(enabled: boolean): void;
+  /** Resolves once on-device recognition is ready, which can include downloading its model. */
+  startSpeechListener(locale: string): Promise<void>;
+  /** The whole transcript since `startSpeechListener`. */
+  stopSpeechListener(): Promise<string>;
+  startRecording(): Promise<void>;
+  /** The AAC recording of the capture since `startRecording`, or null if nothing was captured. */
+  stopRecording(): Promise<RecordedAudio | null>;
   addListener(
     event: "onCapture",
     listener: (event: { data: string; level: number }) => void,
@@ -26,6 +36,38 @@ interface T3VoiceAudioModule {
     listener: (event: { inputs: ReadonlyArray<VoiceAudioInput> }) => void,
   ): EventSubscription;
   addListener(event: "onError", listener: (event: { message: string }) => void): EventSubscription;
+  /** The current segment's text as it changes, then once with `isFinal` when it settles. */
+  addListener(
+    event: "onSpeech",
+    listener: (event: { text: string; isFinal: boolean }) => void,
+  ): EventSubscription;
+  /** A play/pause press, while remote control is on. */
+  addListener(event: "onRemoteCommand", listener: () => void): EventSubscription;
+}
+
+interface RecordedAudio {
+  readonly uri: string;
+  readonly mimeType: string;
+}
+
+/** Dictation pieces the native module adds to voice audio, all fed by the same capture. */
+export interface NativeDictationAudio {
+  playChime(kind: "start" | "end"): void;
+  /** Play/pause presses call `onPress` until called again with null. */
+  setRemoteControl(onPress: (() => void) | null): void;
+  /**
+   * Recognizes the capture on device. `onText` gets the current segment's text as it changes
+   * (volatile guesses included) and once more with `isFinal` when the segment settles.
+   */
+  startPhraseListener(
+    locale: string,
+    onText: (text: string, isFinal: boolean) => void,
+  ): Promise<void>;
+  /** Stops recognition and returns every segment joined. */
+  stopPhraseListener(): Promise<string>;
+  /** Records the capture to a compressed file until `stopRecordingFile`. */
+  startRecordingFile(): Promise<void>;
+  stopRecordingFile(): Promise<RecordedAudio | null>;
 }
 
 // modules/t3-voice-audio; iOS only for now.
@@ -42,9 +84,11 @@ export const isVoiceAgentAudioAvailable = nativeModule !== null;
  */
 export function createNativeVoiceAudio(
   selectInput: (inputs: ReadonlyArray<VoiceAudioInput>) => VoiceAudioInput | null,
-): VoiceAgentAudio {
+): VoiceAgentAudio & NativeDictationAudio {
   const module = nativeModule;
   let subscriptions: Array<EventSubscription> = [];
+  let speechSubscription: EventSubscription | null = null;
+  let remoteSubscription: EventSubscription | null = null;
 
   const applyInput = async (inputs: ReadonlyArray<VoiceAudioInput>) => {
     const input = selectInput(inputs);
@@ -88,6 +132,54 @@ export function createNativeVoiceAudio(
 
     clearPlayback() {
       module?.clearPlayback();
+    },
+
+    playChime(kind) {
+      module?.playChime(kind);
+    },
+
+    setRemoteControl(onPress) {
+      remoteSubscription?.remove();
+      remoteSubscription =
+        onPress === null || module === null
+          ? null
+          : module.addListener("onRemoteCommand", () => onPress());
+      module?.setRemoteControl(onPress !== null);
+    },
+
+    async startPhraseListener(locale, onText) {
+      if (module === null) {
+        throw new Error("Dictation needs a newer build of the app.");
+      }
+      speechSubscription?.remove();
+      speechSubscription = module.addListener("onSpeech", (event) =>
+        onText(event.text, event.isFinal),
+      );
+      try {
+        await module.startSpeechListener(locale);
+      } catch (error) {
+        speechSubscription.remove();
+        speechSubscription = null;
+        throw error;
+      }
+    },
+
+    async stopPhraseListener() {
+      const transcript = (await module?.stopSpeechListener()) ?? "";
+      speechSubscription?.remove();
+      speechSubscription = null;
+      return transcript;
+    },
+
+    async startRecordingFile() {
+      if (module === null) {
+        throw new Error("Dictation needs a newer build of the app.");
+      }
+      await module.startRecording();
+    },
+
+    async stopRecordingFile() {
+      return (await module?.stopRecording()) ?? null;
     },
   };
 }

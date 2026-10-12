@@ -113,7 +113,13 @@ function VoiceAgentPanelContent({ state }: { readonly state: VoiceAgentState }) 
             </Pressable>
           </View>
 
-          {latest !== undefined && !isError ? (
+          {state.dictation !== null ? (
+            <Text className="text-sm text-foreground-muted" numberOfLines={2}>
+              {state.dictation.heard.trim() === ""
+                ? "Recording. The agent is not listening."
+                : `…${state.dictation.heard.trim().slice(-120)}`}
+            </Text>
+          ) : latest !== undefined && !isError ? (
             <Text className="text-sm text-foreground-muted" numberOfLines={2}>
               {latest.role === "user" ? "You: " : ""}
               {latest.text}
@@ -128,7 +134,23 @@ function VoiceAgentPanelContent({ state }: { readonly state: VoiceAgentState }) 
             >
               <Text className="text-sm font-t3-medium text-foreground">Try again</Text>
             </Pressable>
-          ) : pushToTalk ? (
+          ) : state.dictation?.phase === "recording" ? (
+            <Pressable
+              accessibilityRole="button"
+              className="h-14 flex-row items-center justify-center gap-2 rounded-2xl bg-primary active:opacity-70"
+              onPress={() => voiceAgentController.finishDictation()}
+            >
+              <SymbolView
+                name="stop.fill"
+                size={16}
+                tintColorClassName="accent-primary-foreground"
+                type="monochrome"
+              />
+              <Text className="text-base font-t3-medium text-primary-foreground">
+                Finish dictation
+              </Text>
+            </Pressable>
+          ) : state.dictation !== null ? null : pushToTalk ? (
             <Pressable
               accessibilityHint="Hold while you speak"
               accessibilityRole="button"
