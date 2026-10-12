@@ -43,11 +43,13 @@ const VOICE_METERING_INTERVAL_MS = 80;
 // builds them with expo-audio's internal `createRecordingOptions`.
 const { ios: IOS_RECORDING_OPTIONS, android: ANDROID_RECORDING_OPTIONS } =
   RecordingPresets.HIGH_QUALITY;
+// Speech quality: mono AAC at 48 kbps keeps a 20-minute recording near 7 MB, so Gemini still
+// takes it in one request.
 const VOICE_RECORDING_OPTIONS = {
   extension: RecordingPresets.HIGH_QUALITY.extension,
-  sampleRate: RecordingPresets.HIGH_QUALITY.sampleRate,
-  numberOfChannels: RecordingPresets.HIGH_QUALITY.numberOfChannels,
-  bitRate: RecordingPresets.HIGH_QUALITY.bitRate,
+  sampleRate: 24_000,
+  numberOfChannels: 1,
+  bitRate: 48_000,
   isMeteringEnabled: true,
   ...(Platform.OS === "ios" ? IOS_RECORDING_OPTIONS : ANDROID_RECORDING_OPTIONS),
 };
