@@ -18,6 +18,7 @@ import {
   derivePendingThreadRequests,
   type ThreadUserInputQuestion,
 } from "../state/threadRequests.ts";
+import type { VoiceDictationStore } from "./dictation.ts";
 import type { VoiceAgentTool } from "./session.ts";
 
 /**
@@ -93,6 +94,7 @@ export const VOICE_AGENT_INSTRUCTIONS = `You are the voice interface for T3 Code
 - A thread's status "done" means it finished and the user has not looked at it yet (the green Done check in the app). "Settled" threads are finished work moved out of the active list; list_threads leaves them out unless asked for, or when searching. settle_thread and reopen_thread move threads between the two.
 - Before approving or denying a request, stopping a thread, or starting one, say in a few words what you are about to do and wait for the user to say yes. Never approve on your own judgment.
 - If a request is ambiguous, ask one short clarifying question instead of guessing.
+- When the user wants to dictate or say something long, call start_dictation, say only "Go ahead" or similar, and then stay silent. The transcript arrives as a "[T3 dictation dN]" message: unless it is clear what it is for, ask. To send it or start a thread with it, pass its dictationId instead of retyping it; read the summary back as usual before starting a thread.
 - Only say an action worked after its tool returned success. If a tool failed or its outcome is unknown, say so, and check with list_threads or read_thread before trying again.
 Messages that start with "[T3 update]" come from the app, not the user: mention them briefly when relevant.`;
 
@@ -156,6 +158,19 @@ const stringArg = (args: Record<string, unknown>, name: string): string => {
   return value.trim();
 };
 
+/** Dictation as the tools see it: the saved transcripts, and a way to start one. */
+export interface VoiceAgentDictationTools {
+  readonly store: VoiceDictationStore;
+  /** Starts dictation once the agent is quiet; returns what the agent is told. */
+  readonly request: () => string;
+}
+
+const dictationIdSchema = {
+  type: "string",
+  description:
+    'A dictation to use as the message instead of "message": its ID from a [T3 dictation] message, or "latest".',
+};
+
 const matches = (query: string | undefined, ...values: ReadonlyArray<string | null>) =>
   query === undefined ||
   values.some((value) => value?.toLowerCase().includes(query.toLowerCase()) === true);
@@ -206,7 +221,17 @@ const APPROVAL_DECISIONS: Record<string, ProviderApprovalDecision> = {
 export function createVoiceAgentTools(
   workspace: VoiceAgentWorkspace,
   now: () => number = Date.now,
+  dictation?: VoiceAgentDictationTools,
 ): ReadonlyArray<VoiceAgentTool> {
+  /** "message", or the text of the dictation "dictationId" names. */
+  const messageArg = (args: Record<string, unknown>): string => {
+    if (typeof args.dictationId === "string" && args.dictationId.trim()) {
+      const saved = dictation?.store.get(args.dictationId);
+      if (!saved) throw new Error(`There is no dictation "${args.dictationId}".`);
+      return saved.text;
+    }
+    return stringArg(args, "message");
+  };
   const environmentName = (environmentId: EnvironmentId) => {
     const environments = new Set(workspace.projects().map((project) => project.environmentId));
     // Only worth saying when there is more than one machine to tell apart.
@@ -437,6 +462,7 @@ export function createVoiceAgentTools(
               description:
                 "The task for the new thread's agent: the user's full request, in their words.",
             },
+            dictationId: dictationIdSchema,
             worktree: {
               type: "boolean",
               description:
@@ -448,21 +474,17 @@ export function createVoiceAgentTools(
                 "The exact name of a local branch, from list_branches, to start a new worktree off. Leave out for the checkout's current branch.",
             },
           },
-          required: ["projectId", "message"],
+          required: ["projectId"],
         },
       },
       run: async (args) => {
         const project = findProject(args);
-        const { threadId, plan } = await workspace.startThread(
-          project,
-          stringArg(args, "message"),
-          {
-            ...(typeof args.worktree === "boolean" ? { worktree: args.worktree } : {}),
-            ...(typeof args.baseBranch === "string" && args.baseBranch.trim()
-              ? { baseBranch: args.baseBranch.trim() }
-              : {}),
-          },
-        );
+        const { threadId, plan } = await workspace.startThread(project, messageArg(args), {
+          ...(typeof args.worktree === "boolean" ? { worktree: args.worktree } : {}),
+          ...(typeof args.baseBranch === "string" && args.baseBranch.trim()
+            ? { baseBranch: args.baseBranch.trim() }
+            : {}),
+        });
         return JSON.stringify({ started: true, threadId, runsIn: describeWorkspace(plan) });
       },
     },
@@ -473,15 +495,20 @@ export function createVoiceAgentTools(
           "Sends a follow-up message to a thread's agent. If it is working, the message goes in after the current turn.",
         parametersJsonSchema: {
           type: "object",
-          properties: { threadId: threadIdSchema, message: { type: "string" } },
-          required: ["threadId", "message"],
+          properties: {
+            threadId: threadIdSchema,
+            message: { type: "string" },
+            dictationId: dictationIdSchema,
+          },
+          required: ["threadId"],
         },
       },
       run: async (args) => {
-        await workspace.sendMessage(findThread(args), stringArg(args, "message"));
+        await workspace.sendMessage(findThread(args), messageArg(args));
         return "Sent.";
       },
     },
+    ...(dictation === undefined ? [] : dictationTools(dictation)),
     {
       declaration: {
         name: "stop_thread",
@@ -639,6 +666,39 @@ export function createVoiceAgentTools(
       run: async (args) => {
         workspace.openThread(findThread(args));
         return "Opened.";
+      },
+    },
+  ];
+}
+
+/** start_dictation and read_dictation, where the platform can dictate. */
+function dictationTools(dictation: VoiceAgentDictationTools): ReadonlyArray<VoiceAgentTool> {
+  return [
+    {
+      declaration: {
+        name: "start_dictation",
+        description:
+          'Starts dictation: the user talks for as long as they like, unheard by you, until they press the button or say "stop dictation". The transcript then arrives as a [T3 dictation] message. Use when the user wants to dictate or say something long.',
+        parametersJsonSchema: { type: "object", properties: {} },
+      },
+      run: async () => dictation.request(),
+    },
+    {
+      declaration: {
+        name: "read_dictation",
+        description: "Reads a dictation's full text.",
+        parametersJsonSchema: {
+          type: "object",
+          properties: { dictationId: dictationIdSchema },
+          required: ["dictationId"],
+        },
+      },
+      run: async (args) => {
+        const saved = dictation.store.get(
+          typeof args.dictationId === "string" ? args.dictationId : "",
+        );
+        if (!saved) return "There is no such dictation.";
+        return JSON.stringify({ dictationId: saved.id, text: saved.text });
       },
     },
   ];

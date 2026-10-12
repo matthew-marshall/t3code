@@ -3,6 +3,7 @@ import * as DateTime from "effect/DateTime";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { EnvironmentProject, EnvironmentThreadShell } from "../state/models.ts";
+import { VoiceDictationStore } from "./dictation.ts";
 import { createVoiceAgentTools, excerpt, type VoiceAgentWorkspace } from "./tools.ts";
 
 const NOW = Date.parse("2026-10-11T12:00:00.000Z");
@@ -69,10 +70,15 @@ function setup(projection: Partial<OrchestrationV2ThreadProjection> = {}) {
     answerQuestion: vi.fn(async () => {}),
     openThread: vi.fn(),
   } as unknown as VoiceAgentWorkspace;
-  const tools = createVoiceAgentTools(workspace, () => NOW);
+  const dictations = new VoiceDictationStore();
+  const requestDictation = vi.fn(() => "Dictation starts with a chime.");
+  const tools = createVoiceAgentTools(workspace, () => NOW, {
+    store: dictations,
+    request: requestDictation,
+  });
   const call = (name: string, args: Record<string, unknown>) =>
     tools.find((tool) => tool.declaration.name === name)!.run(args);
-  return { workspace, call };
+  return { workspace, call, dictations, requestDictation };
 }
 
 describe("voice agent tools", () => {
@@ -282,5 +288,20 @@ describe("voice agent tools", () => {
     expect(read.messages[1].text).toContain("characters omitted");
     expect(read.messages[0].text.endsWith("Done with step one?")).toBe(true);
     expect(excerpt("short", 100)).toBe("short");
+  });
+
+  it("sends a dictation by its ID instead of retyping it, and starts dictation on request", async () => {
+    const { workspace, call, dictations, requestDictation } = setup();
+    dictations.add("A long rambling request about the upload retries.", NOW);
+    await call("send_message", { threadId: "t-idle", dictationId: "latest" });
+    expect(workspace.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "t-idle" }),
+      "A long rambling request about the upload retries.",
+    );
+    await expect(call("send_message", { threadId: "t-idle", dictationId: "d9" })).rejects.toThrow(
+      'no dictation "d9"',
+    );
+    await expect(call("start_dictation", {})).resolves.toBe("Dictation starts with a chime.");
+    expect(requestDictation).toHaveBeenCalled();
   });
 });

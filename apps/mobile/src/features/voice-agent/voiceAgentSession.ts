@@ -16,13 +16,17 @@ import {
   VOICE_AGENT_INSTRUCTIONS,
   type VoiceAgentMode,
   VoiceAgentSessionController,
+  VoiceDictationStore,
 } from "@t3tools/client-runtime/voice-agent";
+import { AsyncResult } from "effect/reactivity";
+import { File } from "expo-file-system";
 
 import { uuidv4 } from "../../lib/uuid";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { selectPreferredMicrophone } from "../../state/microphone-selection";
 import { orchestrationEnvironment } from "../../state/orchestration";
-import { updateMobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { geminiVoiceTranscriber } from "../voice-input/geminiDictation";
 import { environmentProjects, projectEnvironment } from "../../state/projects";
 import { serverEnvironment } from "../../state/server";
 import { environmentThreadShells, threadEnvironment } from "../../state/threads";
@@ -95,6 +99,31 @@ const watchThreads = () => {
   });
 };
 
+const dictations = new VoiceDictationStore();
+
+const dictationMode = () => {
+  const preferences = appAtomRegistry.get(mobilePreferencesAtom);
+  return (
+    (AsyncResult.isSuccess(preferences) ? preferences.value.voiceAgentDictationMode : undefined) ??
+    "gemini-batch"
+  );
+};
+
+/** Gemini 3.5 Transcribe for a finished dictation; the recording is deleted either way. */
+async function transcribeDictation(recording: { readonly uri: string }): Promise<string> {
+  const signal = new AbortController().signal;
+  try {
+    const prepared = await geminiVoiceTranscriber.prepare({ signal });
+    return await prepared.transcribe(recording.uri, { signal });
+  } finally {
+    try {
+      new File(recording.uri).delete();
+    } catch {
+      // A leftover recording in the caches folder is cleared by the system.
+    }
+  }
+}
+
 const providers = {
   gemini: createGeminiVoiceProvider({ readApiKey: geminiKey.read }),
   openai: createOpenAIVoiceProvider({ readApiKey: openAIKey.read }),
@@ -105,7 +134,10 @@ export const voiceAgentController: VoiceAgentSessionController = new VoiceAgentS
     provider: providers.gemini,
     instructions: VOICE_AGENT_INSTRUCTIONS,
     language: Intl.DateTimeFormat().resolvedOptions().locale,
-    tools: createVoiceAgentTools(workspace),
+    tools: createVoiceAgentTools(workspace, undefined, {
+      store: dictations,
+      request: () => voiceAgentController.requestDictation(),
+    }),
     describeContext: () => {
       const onScreen = host?.threadOnScreen;
       if (!onScreen) return null;
@@ -130,6 +162,7 @@ export const voiceAgentController: VoiceAgentSessionController = new VoiceAgentS
       return inputs.find((input) => input.type === "CarAudio") ?? preferred;
     }),
     onEvent: logVoiceEvent,
+    dictation: { store: dictations, mode: dictationMode, transcribeRecording: transcribeDictation },
     onStateChange: (state) => {
       if (state.phase === "live" && unsubscribeThreads === null) {
         watchThreads();
