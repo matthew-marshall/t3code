@@ -1,4 +1,5 @@
 import ExpoModulesCore
+import NetworkExtension
 import OCCore
 import os
 
@@ -34,7 +35,14 @@ public final class T3VpnTunnelModule: Module {
 
   public func definition() -> ModuleDefinition {
     Name("T3VpnTunnel")
-    Events("onState", "onLog")
+    Events("onState", "onLog", "onSystemState")
+
+    // Whether this build embeds the packet tunnel extension (the background path).
+    Constant("systemVpnAvailable") { () -> Bool in
+      guard let plugIns = Bundle.main.builtInPlugInsURL else { return false }
+      return FileManager.default.fileExists(
+        atPath: plugIns.appendingPathComponent("T3PacketTunnel.appex").path)
+    }
 
     AsyncFunction("start") { (options: VpnTunnelStartOptions, promise: Promise) in
       self.start(options, promise: promise)
@@ -74,8 +82,139 @@ public final class T3VpnTunnelModule: Module {
       return ["localPort": Int(occore_local_port(current))]
     }
 
+    // The background path: the same tunnel as a system VPN (the packet tunnel extension), which
+    // keeps running while the app is closed. Resolves once it is connected.
+    AsyncFunction("startSystem") { (options: VpnTunnelStartOptions) in
+      try await self.startSystem(options)
+    }
+
+    AsyncFunction("stopSystem") {
+      let manager = try await self.systemManager(create: false)
+      manager?.connection.stopVPNTunnel()
+    }
+
+    AsyncFunction("getSystemState") { () -> String in
+      let manager = try await self.systemManager(create: false)
+      return manager.map { Self.statusName($0.connection.status) } ?? "stopped"
+    }
+
+    /// The extension's recent log lines; empty when it is not running.
+    AsyncFunction("getSystemLog") { () -> [String] in
+      guard let session = try await self.systemManager(create: false)?.connection as? NETunnelProviderSession,
+        session.status != .invalid, session.status != .disconnected
+      else { return [] }
+      return await withCheckedContinuation { continuation in
+        do {
+          try session.sendProviderMessage(Data()) { data in
+            let lines = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String] }
+            continuation.resume(returning: lines ?? [])
+          }
+        } catch {
+          continuation.resume(returning: [])
+        }
+      }
+    }
+
+    OnStartObserving {
+      self.statusObserver = NotificationCenter.default.addObserver(
+        forName: .NEVPNStatusDidChange, object: nil, queue: nil
+      ) { [weak self] note in
+        guard let connection = note.object as? NEVPNConnection else { return }
+        self?.sendEvent("onSystemState", ["state": Self.statusName(connection.status)])
+      }
+    }
+
+    OnStopObserving {
+      if let observer = self.statusObserver { NotificationCenter.default.removeObserver(observer) }
+      self.statusObserver = nil
+    }
+
     OnDestroy {
       self.stop()
+    }
+  }
+
+  private var statusObserver: NSObjectProtocol?
+
+  private static var extensionBundleIdentifier: String {
+    (Bundle.main.bundleIdentifier ?? "") + ".packet-tunnel"
+  }
+
+  private static func statusName(_ status: NEVPNStatus) -> String {
+    switch status {
+    case .connected: return "connected"
+    case .connecting, .reasserting: return "connecting"
+    case .disconnecting: return "disconnecting"
+    default: return "stopped"
+    }
+  }
+
+  /// This app's VPN configuration, created (which asks the user to allow it once) when `create`.
+  private func systemManager(create: Bool) async throws -> NETunnelProviderManager? {
+    let managers = try await NETunnelProviderManager.loadAllFromPreferences()
+    if let existing = managers.first { return existing }
+    return create ? NETunnelProviderManager() : nil
+  }
+
+  private func startSystem(_ options: VpnTunnelStartOptions) async throws {
+    guard let manager = try await systemManager(create: true) else { return }
+    let proto = (manager.protocolConfiguration as? NETunnelProviderProtocol) ?? NETunnelProviderProtocol()
+    proto.providerBundleIdentifier = Self.extensionBundleIdentifier
+    proto.serverAddress = options.gateway
+    // Not secret; the cookie only travels in the start options below.
+    var configuration: [String: Any] = [
+      "gateway": options.gateway, "targetHost": options.targetHost, "os": options.os,
+    ]
+    if let pin = options.serverCertPin { configuration["serverCertPin"] = pin }
+    proto.providerConfiguration = configuration
+    proto.disconnectOnSleep = false
+    manager.protocolConfiguration = proto
+    manager.localizedDescription = "T3 Code"
+    manager.isEnabled = true
+    try await manager.saveToPreferences()
+    // Saving can leave the manager stale until reloaded.
+    try await manager.loadFromPreferences()
+
+    if manager.connection.status == .connected { return }
+    try await waitForConnection(manager) {
+      try (manager.connection as? NETunnelProviderSession)?.startTunnel(options: [
+        "cookie": options.cookie as NSString
+      ])
+    }
+  }
+
+  /// Runs `start`, then waits until the VPN connects or gives up with the extension's reason.
+  private func waitForConnection(
+    _ manager: NETunnelProviderManager, start: () throws -> Void
+  ) async throws {
+    let connection = manager.connection
+    let stream = AsyncStream<NEVPNStatus> { continuation in
+      let observer = NotificationCenter.default.addObserver(
+        forName: .NEVPNStatusDidChange, object: connection, queue: nil
+      ) { _ in continuation.yield(connection.status) }
+      continuation.onTermination = { _ in NotificationCenter.default.removeObserver(observer) }
+    }
+    try start()
+    var sawConnecting = false
+    for await status in stream {
+      switch status {
+      case .connected:
+        return
+      case .connecting, .reasserting:
+        sawConnecting = true
+      case .disconnected, .invalid:
+        guard sawConnecting else { continue }
+        // The async form throws the extension's reason rather than returning it.
+        var reason = "The VPN did not connect."
+        do {
+          try await connection.fetchLastDisconnectError()
+        } catch {
+          reason = error.localizedDescription
+        }
+        throw Exception(name: "ERR_VPN_SYSTEM", description: reason)
+      default:
+        continue
+      }
     }
   }
 

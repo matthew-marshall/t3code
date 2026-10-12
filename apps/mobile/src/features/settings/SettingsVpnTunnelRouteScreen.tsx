@@ -6,8 +6,13 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
 import { ConnectionFormField } from "../connection/ConnectionFormField";
-import { nativeVpnTunnel, type VpnTunnelState } from "../vpn-tunnel/nativeVpnTunnel";
 import {
+  nativeVpnTunnel,
+  type SystemVpnState,
+  type VpnTunnelState,
+} from "../vpn-tunnel/nativeVpnTunnel";
+import {
+  isIPv4Address,
   loadVpnTunnelConfig,
   parseGpclientCookieOutput,
   saveVpnTunnelConfig,
@@ -16,12 +21,16 @@ import {
 import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
+import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
+
+const systemVpnAvailable = nativeVpnTunnel?.systemVpnAvailable === true;
 
 const MAX_LOG_LINES = 300;
 
 /**
- * Configures the in-app GlobalProtect tunnel. Environments whose host and port match the
- * target connect through it; nothing else on the phone uses the VPN.
+ * Configures the GlobalProtect tunnel. Environments whose host and port match the target connect
+ * through it: the in-app tunnel, or with "Keep connected in the background" a system VPN that
+ * routes only the target.
  */
 export function SettingsVpnTunnelRouteScreen() {
   const insets = useSafeAreaInsets();
@@ -33,6 +42,8 @@ export function SettingsVpnTunnelRouteScreen() {
   const [targetPort, setTargetPort] = useState("3773");
   const [serverCertPin, setServerCertPin] = useState("");
   const [os, setOs] = useState("linux");
+  const [background, setBackground] = useState(false);
+  const [systemState, setSystemState] = useState<SystemVpnState>("stopped");
   const [state, setState] = useState<{ state: VpnTunnelState; detail?: string }>(() => ({
     state: nativeVpnTunnel?.getState().state ?? "stopped",
   }));
@@ -49,28 +60,53 @@ export function SettingsVpnTunnelRouteScreen() {
         setTargetPort(String(config.targetPort));
         setServerCertPin(config.serverCertPin ?? "");
         setOs(config.os);
+        setBackground(config.background === true);
       });
+      if (systemVpnAvailable && nativeVpnTunnel !== null) {
+        void nativeVpnTunnel.getSystemState().then(setSystemState);
+      }
     }, []),
   );
+
+  const usingSystemVpn = systemVpnAvailable && saved?.background === true;
+  // The extension keeps its own log; read it when the system VPN changes state.
+  useEffect(() => {
+    // Mid-connect the extension has little to say; read it once it settles.
+    if (!usingSystemVpn || systemState === "connecting" || nativeVpnTunnel === null) return;
+    void nativeVpnTunnel.getSystemLog().then((lines) => {
+      if (lines.length > 0) setLog(lines);
+    });
+  }, [usingSystemVpn, systemState]);
 
   useEffect(() => {
     if (nativeVpnTunnel === null) return;
     const stateSub = nativeVpnTunnel.addListener("onState", (event) => setState(event));
+    const systemSub = systemVpnAvailable
+      ? nativeVpnTunnel.addListener("onSystemState", (event) => setSystemState(event.state))
+      : null;
     const logSub = nativeVpnTunnel.addListener("onLog", (event) =>
       setLog((lines) => [...lines, event.message].slice(-MAX_LOG_LINES)),
     );
     return () => {
       stateSub.remove();
+      systemSub?.remove();
       logSub.remove();
     };
   }, []);
 
   /** Saves the form; resolves false (after alerting) when it is incomplete. */
-  const save = async (): Promise<boolean> => {
+  const save = async (inBackground = background): Promise<boolean> => {
     const parsed = parseGpclientCookieOutput(cookieOutput);
     const port = Number(targetPort);
     if (targetHost.trim() === "" || !Number.isInteger(port) || port <= 0 || port > 65535) {
       Alert.alert("Missing workstation", "Enter the workstation's host and T3 port.");
+      return false;
+    }
+    if (inBackground && !isIPv4Address(targetHost.trim())) {
+      Alert.alert(
+        "Workstation address needed",
+        "The background VPN routes one address, so enter the workstation as an IPv4 address.",
+      );
       return false;
     }
     const config: VpnTunnelConfig = {
@@ -81,6 +117,7 @@ export function SettingsVpnTunnelRouteScreen() {
       targetPort: port,
       os: os.trim() || "linux",
       ...(serverCertPin.trim() ? { serverCertPin: serverCertPin.trim() } : {}),
+      ...(inBackground ? { background: true } : {}),
     };
     await saveVpnTunnelConfig(config);
     setSaved(config);
@@ -121,9 +158,13 @@ export function SettingsVpnTunnelRouteScreen() {
         <SettingsSection title="Status">
           <View className="gap-1 px-2">
             <Text className="text-foreground">
-              {state.state === "stopped" && !state.detail
-                ? "Idle · starts when the app connects to the workstation"
-                : `${state.state}${state.detail ? ` · ${state.detail}` : ""}`}
+              {usingSystemVpn
+                ? systemState === "stopped"
+                  ? "Background VPN idle · starts when the app connects to the workstation"
+                  : `Background VPN ${systemState}`
+                : state.state === "stopped" && !state.detail
+                  ? "Idle · starts when the app connects to the workstation"
+                  : `${state.state}${state.detail ? ` · ${state.detail}` : ""}`}
             </Text>
             <Text className="text-sm text-foreground-muted">
               {saved === null
@@ -172,6 +213,25 @@ export function SettingsVpnTunnelRouteScreen() {
             <SettingsActionRow icon="trash" label="Remove" tone="danger" onPress={remove} />
           ) : null}
         </SettingsSection>
+
+        {systemVpnAvailable ? (
+          <SettingsSection title="Background">
+            <SettingsSwitchRow
+              icon={{ ios: "lock.shield", android: "lock" }}
+              label="Keep connected in the background"
+              subtitle="Runs as a system VPN that carries only the workstation, so T3 stays connected while closed"
+              value={background}
+              onValueChange={(value) => {
+                setBackground(value);
+                if (saved !== null) {
+                  void save(value).then((ok) => {
+                    if (!ok) setBackground(!value);
+                  });
+                }
+              }}
+            />
+          </SettingsSection>
+        ) : null}
 
         <SettingsSection title="Advanced">
           <ConnectionFormField

@@ -24,6 +24,11 @@ export interface VpnTunnelConfig {
   readonly serverCertPin?: string;
   /** Must match the OS the cookie was obtained with. */
   readonly os: string;
+  /**
+   * Run as a system VPN (the packet tunnel extension) that keeps working while the app is closed
+   * and carries only targetHost, instead of the in-app tunnel. targetHost must be an IPv4 address.
+   */
+  readonly background?: boolean;
 }
 
 export async function loadVpnTunnelConfig(): Promise<VpnTunnelConfig | null> {
@@ -64,6 +69,8 @@ export function parseGpclientCookieOutput(
 
 export async function saveVpnTunnelConfig(config: VpnTunnelConfig | null): Promise<void> {
   await nativeVpnTunnel?.stop();
+  // A running system VPN keeps the settings it started with; the next connection starts it anew.
+  if (nativeVpnTunnel?.systemVpnAvailable) await nativeVpnTunnel.stopSystem();
   if (config === null) {
     await SecureStore.deleteItemAsync(CONFIG_KEY);
   } else {
@@ -74,6 +81,16 @@ export async function saveVpnTunnelConfig(config: VpnTunnelConfig | null): Promi
 function effectivePort(url: URL): number {
   if (url.port !== "") return Number(url.port);
   return url.protocol === "https:" || url.protocol === "wss:" ? 443 : 80;
+}
+
+/** Whether the config runs as the system VPN, and this build can. */
+export function usesSystemVpn(config: VpnTunnelConfig): boolean {
+  return config.background === true && nativeVpnTunnel?.systemVpnAvailable === true;
+}
+
+export function isIPv4Address(host: string): boolean {
+  const parts = host.split(".");
+  return parts.length === 4 && parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255);
 }
 
 /** Whether an endpoint is the tunnel's target, i.e. should be routed through the tunnel. */
@@ -122,6 +139,40 @@ function reopenForward(native: NonNullable<typeof nativeVpnTunnel>, port: number
       pendingReopen = null;
     });
   return pendingReopen;
+}
+
+let pendingSystemStart: Promise<void> | null = null;
+
+/**
+ * Starts the system VPN unless it is already up. iOS keeps it running, and reconnects it after
+ * network changes, until it is turned off in Settings → VPN Tunnel.
+ */
+export function ensureSystemVpn(config: VpnTunnelConfig): Promise<void> {
+  const native = nativeVpnTunnel;
+  if (native === null || !native.systemVpnAvailable) {
+    return Promise.reject(new Error("The background VPN is not built into this app."));
+  }
+  if (config.cookie === "" || config.gateway === "") {
+    return Promise.reject(new VpnTunnelSignInRequiredError());
+  }
+  pendingSystemStart ??= native
+    .getSystemState()
+    .then((state) =>
+      state === "connected"
+        ? undefined
+        : native.startSystem({
+            gateway: config.gateway,
+            cookie: config.cookie,
+            targetHost: config.targetHost,
+            targetPort: config.targetPort,
+            os: config.os,
+            ...(config.serverCertPin ? { serverCertPin: config.serverCertPin } : {}),
+          }),
+    )
+    .finally(() => {
+      pendingSystemStart = null;
+    });
+  return pendingSystemStart;
 }
 
 /** Starts the tunnel if needed and resolves with its local port. */

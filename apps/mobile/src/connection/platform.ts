@@ -30,9 +30,11 @@ import { clearThreadComposerErrorsForEnvironment } from "../state/thread-compose
 import { mobileApplicationActiveWakeup } from "./app-state-wakeups";
 import { nativeVpnTunnel } from "../features/vpn-tunnel/nativeVpnTunnel";
 import {
+  ensureSystemVpn,
   ensureVpnTunnel,
   isTunnelTarget,
   loadVpnTunnelConfig,
+  usesSystemVpn,
   rewriteToTunnel,
   VpnTunnelSignInRequiredError,
 } from "../features/vpn-tunnel/vpnTunnel";
@@ -162,11 +164,29 @@ const layerWakeups = Wakeups.layer({
   ),
 });
 
-// Routes the configured VPN tunnel target through the in-app GlobalProtect tunnel.
+const tunnelConnectionError = (cause: unknown) => {
+  const detail = `VPN tunnel: ${cause instanceof Error ? cause.message : String(cause)}`;
+  return cause instanceof VpnTunnelSignInRequiredError ||
+    detail.includes("rejected the cookie") ||
+    detail.includes("sign-in expired")
+    ? new ConnectionBlockedError({ reason: "authentication", detail })
+    : new ConnectionTransientError({ reason: "network", detail });
+};
+
+// Routes the configured VPN tunnel target through the GlobalProtect tunnel: the system VPN when
+// it is on, else the in-app tunnel's localhost forward.
 const vpnTunnelTransport = ClientCapabilities.DirectEndpointTransport.of({
   resolve: Effect.fn("mobile.vpnTunnel.resolve")(function* (endpoint) {
     const config = yield* Effect.promise(() => loadVpnTunnelConfig());
     if (config === null || !isTunnelTarget(endpoint, config)) return endpoint;
+    if (usesSystemVpn(config)) {
+      // The system VPN routes the workstation itself, so the endpoint stays as it is.
+      yield* Effect.tryPromise({
+        try: () => ensureSystemVpn(config),
+        catch: tunnelConnectionError,
+      });
+      return endpoint;
+    }
     if (new URL(endpoint.httpBaseUrl).protocol === "https:") {
       return yield* new ConnectionBlockedError({
         reason: "unsupported",
@@ -175,13 +195,7 @@ const vpnTunnelTransport = ClientCapabilities.DirectEndpointTransport.of({
     }
     const localPort = yield* Effect.tryPromise({
       try: () => ensureVpnTunnel(config),
-      catch: (cause) => {
-        const detail = `VPN tunnel: ${cause instanceof Error ? cause.message : String(cause)}`;
-        return cause instanceof VpnTunnelSignInRequiredError ||
-          detail.includes("rejected the cookie")
-          ? new ConnectionBlockedError({ reason: "authentication", detail })
-          : new ConnectionTransientError({ reason: "network", detail });
-      },
+      catch: tunnelConnectionError,
     });
     return rewriteToTunnel(endpoint, localPort);
   }),
