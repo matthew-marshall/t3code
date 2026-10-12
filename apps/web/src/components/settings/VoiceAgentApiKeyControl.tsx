@@ -1,37 +1,52 @@
+import type { VoiceAgentProviderId } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 
-import { readGeminiKey, saveGeminiKey, subscribeGeminiKey } from "~/voice/geminiKey";
+import {
+  readVoiceAgentKey,
+  saveVoiceAgentKey,
+  subscribeVoiceAgentKeys,
+} from "~/voice/voiceAgentKeys";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { toastManager } from "../ui/toast";
 
+const KEY_LABELS: Record<VoiceAgentProviderId, string> = {
+  gemini: "Gemini API key",
+  openai: "OpenAI API key",
+};
+
 /** Whether a key is saved on this device; the field never shows it. */
-function useGeminiKeySaved(): boolean {
+function useKeySaved(provider: VoiceAgentProviderId): boolean {
   const [saved, setSaved] = useState(false);
   useEffect(() => {
+    let current = true;
     const refresh = () =>
-      void readGeminiKey().then(
-        (key) => setSaved(key !== null && key.length > 0),
-        () => setSaved(false),
+      void readVoiceAgentKey(provider).then(
+        (key) => current && setSaved(key !== null && key.length > 0),
+        () => current && setSaved(false),
       );
     refresh();
-    return subscribeGeminiKey(refresh);
-  }, []);
+    const unsubscribe = subscribeVoiceAgentKeys(refresh);
+    return () => {
+      current = false;
+      unsubscribe();
+    };
+  }, [provider]);
   return saved;
 }
 
-const onSave = (apiKey: string) =>
-  void saveGeminiKey(apiKey).catch((error: unknown) =>
+const onSave = (provider: VoiceAgentProviderId, apiKey: string) =>
+  void saveVoiceAgentKey(provider, apiKey).catch((error: unknown) =>
     toastManager.add({
       type: "error",
-      title: "Could not save the Gemini API key",
+      title: `Could not save the ${KEY_LABELS[provider]}`,
       description: error instanceof Error ? error.message : undefined,
     }),
   );
 
-/** Saves the Gemini key on this device. It is only ever sent to Google. */
-export function VoiceAgentApiKeyControl() {
-  const saved = useGeminiKeySaved();
+/** Saves a provider's key on this device. It is only ever sent to that provider. */
+export function VoiceAgentApiKeyControl({ provider }: { readonly provider: VoiceAgentProviderId }) {
+  const saved = useKeySaved(provider);
   const [draft, setDraft] = useState("");
   const apiKey = draft.trim();
   return (
@@ -40,7 +55,7 @@ export function VoiceAgentApiKeyControl() {
       onSubmit={(event) => {
         event.preventDefault();
         if (apiKey.length === 0) return;
-        onSave(apiKey);
+        onSave(provider, apiKey);
         setDraft("");
       }}
     >
@@ -49,13 +64,13 @@ export function VoiceAgentApiKeyControl() {
         autoComplete="off"
         size="sm"
         className="sm:w-56"
-        aria-label="Gemini API key"
+        aria-label={KEY_LABELS[provider]}
         placeholder={saved ? "Saved, enter a new key to replace" : "Not set"}
         value={draft}
         onChange={(event) => setDraft(event.target.value)}
       />
       {saved && apiKey.length === 0 ? (
-        <Button size="xs" variant="outline" onClick={() => onSave("")}>
+        <Button size="xs" variant="outline" onClick={() => onSave(provider, "")}>
           Remove
         </Button>
       ) : (

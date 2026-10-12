@@ -12,11 +12,15 @@ interface VoiceAudioInput {
 interface T3VoiceAudioModule {
   prepare(): Promise<ReadonlyArray<VoiceAudioInput>>;
   setInput(uid: string): Promise<void>;
-  start(): Promise<void>;
+  /** `sampleRate` is the capture rate the session's provider takes. */
+  start(sampleRate: number): Promise<void>;
   stop(): Promise<void>;
   play(base64Pcm: string): void;
   clearPlayback(): void;
-  addListener(event: "onCapture", listener: (event: { data: string }) => void): EventSubscription;
+  addListener(
+    event: "onCapture",
+    listener: (event: { data: string; level: number }) => void,
+  ): EventSubscription;
   addListener(
     event: "onInputs",
     listener: (event: { inputs: ReadonlyArray<VoiceAudioInput> }) => void,
@@ -53,7 +57,7 @@ export function createNativeVoiceAudio(
   };
 
   return {
-    async startCapture(onChunk, onError) {
+    async startCapture(onChunk, onError, sampleRate) {
       if (module === null) {
         throw new Error("Voice needs a newer build of the app.");
       }
@@ -63,14 +67,14 @@ export function createNativeVoiceAudio(
       }
       release();
       subscriptions = [
-        module.addListener("onCapture", (event) => onChunk(event.data)),
+        module.addListener("onCapture", (event) => onChunk(event.data, event.level)),
         module.addListener("onError", (event) => onError(event.message)),
         module.addListener("onInputs", (event) => {
           applyInput(event.inputs).catch(() => {});
         }),
       ];
       await applyInput(await module.prepare());
-      await module.start();
+      await module.start(sampleRate);
     },
 
     async stopCapture() {

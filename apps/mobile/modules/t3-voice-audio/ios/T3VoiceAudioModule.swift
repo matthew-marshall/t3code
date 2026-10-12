@@ -2,12 +2,15 @@ import AVFoundation
 import ExpoModulesCore
 import os
 
-private let captureSampleRate = 16_000.0
 private let playbackSampleRate = 24_000.0
-/// 100 ms of 16-bit mono capture, the chunk size Gemini Live recommends.
-private let captureChunkBytes = 3_200
 
-/// Audio for one voice-agent session. The microphone goes out as base64 16 kHz
+/// 16-bit mono capture at the rate the session's provider takes: 16 kHz for Gemini, 24 kHz for
+/// OpenAI.
+private func makeCaptureFormat(sampleRate: Double) -> AVAudioFormat {
+  AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: sampleRate, channels: 1, interleaved: true)!
+}
+
+/// Audio for one voice-agent session. The microphone goes out as base64 16 or 24 kHz
 /// PCM `onCapture` events and `play` queues base64 24 kHz PCM speech. Both run
 /// on one voice-processing AVAudioEngine, so iOS cancels the agent's own voice
 /// out of the microphone, which hands-free mode on the speaker depends on.
@@ -36,6 +39,12 @@ public final class T3VoiceAudioModule: Module {
   private static let prerollFrames = AVAudioFrameCount(playbackSampleRate * 0.2)
   /// A reply shorter than the preroll still plays after this long.
   private static let prerollTimeout: DispatchTimeInterval = .milliseconds(250)
+  /// While speech plays on the phone's own speaker, quieter microphone chunks are sent as
+  /// silence: echo cancellation leaves enough of the agent's voice for Gemini to hear it as the
+  /// user and cut itself off. Someone talking over the agent is louder and still gets through.
+  private static let echoGateDbfs = -32.0
+  /// The room keeps echoing the agent briefly after its speech stops.
+  private static let echoTail: TimeInterval = 0.3
 
   private let queue = DispatchQueue(label: "t3.voice-audio")
   /// Speech scheduled and not yet played, and whether the player is running; queue only.
@@ -55,8 +64,10 @@ public final class T3VoiceAudioModule: Module {
   private var observers: [NSObjectProtocol] = []
   /// Capture not yet sent; only the tap thread touches it while an engine runs.
   private var pending = Data()
-  private let captureFormat = AVAudioFormat(
-    commonFormat: .pcmFormatInt16, sampleRate: captureSampleRate, channels: 1, interleaved: true)!
+  /// Shared by the queue, which opens and closes the gate, and the tap thread, which applies it.
+  private let echoGate = OSAllocatedUnfairLock(initialState: EchoGate())
+  /// Set by `start`, before the engine that reads it runs.
+  private var captureFormat = makeCaptureFormat(sampleRate: 16_000)
   private let playbackFormat = AVAudioFormat(
     commonFormat: .pcmFormatFloat32, sampleRate: playbackSampleRate, channels: 1, interleaved: false)!
 
@@ -85,14 +96,16 @@ public final class T3VoiceAudioModule: Module {
       }
     }
 
-    AsyncFunction("start") {
+    AsyncFunction("start") { (sampleRate: Double) in
       try self.queue.sync {
+        self.captureFormat = makeCaptureFormat(sampleRate: sampleRate)
         self.active = true
         self.rebuilds = []
         self.microphoneWaits = 0
         try self.startEngine()
         self.observe()
       }
+      self.waitForSettledEngine()
     }
 
     AsyncFunction("stop") {
@@ -106,6 +119,9 @@ public final class T3VoiceAudioModule: Module {
     Function("clearPlayback") {
       self.queue.async {
         // Stopping drops every scheduled buffer; the next speech buffers up again before playing.
+        if self.queuedFrames > 0 {
+          Self.logger.notice("Speech cleared with \(self.queuedFrames, privacy: .public) frames queued")
+        }
         self.resetPlayback()
         self.player?.stop()
       }
@@ -122,6 +138,9 @@ public final class T3VoiceAudioModule: Module {
     // the earpiece when nothing is connected.
     try session.setCategory(
       .playAndRecord, mode: .voiceChat, options: [.allowBluetoothHFP, .defaultToSpeaker])
+    // Echo cancellation compares what plays with what the microphone hears; one rate for both
+    // sides keeps it from resampling either. Logs showed speech at 44.1 kHz and the mic at 48.
+    try? session.setPreferredSampleRate(48_000)
     try session.setActive(true)
   }
 
@@ -151,6 +170,14 @@ public final class T3VoiceAudioModule: Module {
     guard let engine, player != nil else { return }
     let input = engine.inputNode
     input.removeTap(onBus: 0)
+    // Echo cancellation is voice processing on this node; make sure a reconfiguration left it on.
+    if !input.isVoiceProcessingEnabled {
+      Self.logger.error("Voice processing was off after a reconfiguration; turning it back on")
+      try input.setVoiceProcessingEnabled(true)
+    }
+    if input.isVoiceProcessingBypassed {
+      input.isVoiceProcessingBypassed = false
+    }
     let inputFormat = input.outputFormat(forBus: 0)
     // A zero format means no microphone; installing a tap on it would crash.
     guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0,
@@ -166,9 +193,45 @@ public final class T3VoiceAudioModule: Module {
     }
     engine.prepare()
     try engine.start()
+    logAudioState(engine)
     // Speech that arrived while the engine was restarting plays now.
     playing = false
     startPlaybackIfReady()
+  }
+
+  /// What echo cancellation depends on, for reading in the device log.
+  private func logAudioState(_ engine: AVAudioEngine) {
+    let session = AVAudioSession.sharedInstance()
+    let input = engine.inputNode
+    let inputs = session.currentRoute.inputs.map(\.portName).joined(separator: ",")
+    let outputs = session.currentRoute.outputs.map(\.portName).joined(separator: ",")
+    Self.logger.notice(
+      """
+      Audio running: voice processing in=\(input.isVoiceProcessingEnabled, privacy: .public) \
+      out=\(engine.outputNode.isVoiceProcessingEnabled, privacy: .public) \
+      bypassed=\(input.isVoiceProcessingBypassed, privacy: .public); \
+      mic \(input.outputFormat(forBus: 0).sampleRate, privacy: .public) Hz \
+      x\(input.outputFormat(forBus: 0).channelCount, privacy: .public), \
+      speaker \(engine.outputNode.outputFormat(forBus: 0).sampleRate, privacy: .public) Hz, \
+      session \(session.sampleRate, privacy: .public) Hz \
+      \(session.category.rawValue, privacy: .public)/\(session.mode.rawValue, privacy: .public); \
+      route \(inputs, privacy: .public) -> \(outputs, privacy: .public)
+      """)
+  }
+
+  /// iOS reconfigures audio about 0.2 s after a voice-processing engine starts, which stops it
+  /// until the restart. Resolving `start` only once that has passed means the app shows
+  /// "Listening" when the microphone is really on, so a first "hello" is not lost in the gap.
+  /// Runs on the module's calling thread, never on `queue`, which does the restart.
+  private func waitForSettledEngine() {
+    let deadline = Date().addingTimeInterval(1.5)
+    Thread.sleep(forTimeInterval: 0.35)
+    while Date() < deadline {
+      let settled = queue.sync { pendingRebuild == nil && engine?.isRunning == true }
+      if settled { return }
+      Thread.sleep(forTimeInterval: 0.05)
+    }
+    Self.logger.notice("Audio was still settling after 1.5 s; starting anyway")
   }
 
   private func startEngine() throws {
@@ -310,10 +373,13 @@ public final class T3VoiceAudioModule: Module {
   }
 
   private func capture(_ buffer: AVAudioPCMBuffer, converter: AVAudioConverter) {
+    let format = converter.outputFormat
     let capacity =
-      AVAudioFrameCount(Double(buffer.frameLength) * captureSampleRate / buffer.format.sampleRate)
+      AVAudioFrameCount(Double(buffer.frameLength) * format.sampleRate / buffer.format.sampleRate)
       + 16
-    guard let output = AVAudioPCMBuffer(pcmFormat: captureFormat, frameCapacity: capacity) else {
+    // 100 ms of 16-bit mono, the chunk size both providers recommend.
+    let chunkBytes = Int(format.sampleRate / 10) * 2
+    guard let output = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else {
       return
     }
     var consumed = false
@@ -332,11 +398,63 @@ public final class T3VoiceAudioModule: Module {
       return
     }
     pending.append(UnsafeBufferPointer(start: samples[0], count: Int(output.frameLength)))
-    while pending.count >= captureChunkBytes {
-      let chunk = pending.prefix(captureChunkBytes)
-      pending.removeFirst(captureChunkBytes)
-      sendEvent("onCapture", ["data": chunk.base64EncodedString()])
+    while pending.count >= chunkBytes {
+      var chunk = Data(pending.prefix(chunkBytes))
+      pending.removeFirst(chunkBytes)
+      let level = Self.dbfs(chunk)
+      let silenced = echoGate.withLock { gate in
+        guard gate.isActive(at: ProcessInfo.processInfo.systemUptime) else { return false }
+        if level < Self.echoGateDbfs {
+          gate.loudestHeld = max(gate.loudestHeld, level)
+          return true
+        }
+        gate.passed += 1
+        return false
+      }
+      if silenced { chunk.resetBytes(in: 0..<chunk.count) }
+      // The level lets hands-free send only around speech; silenced echo counts as quiet.
+      sendEvent("onCapture", ["data": chunk.base64EncodedString(), "level": silenced ? -120 : level])
     }
+  }
+
+  private static func dbfs(_ pcm: Data) -> Double {
+    let sumOfSquares = pcm.withUnsafeBytes { raw in
+      raw.bindMemory(to: Int16.self).reduce(0.0) { sum, sample in
+        let value = Double(Int16(littleEndian: sample)) / 32_768
+        return sum + value * value
+      }
+    }
+    let rms = (sumOfSquares / Double(max(pcm.count / 2, 1))).squareRoot()
+    return rms > 0 ? 20 * log10(rms) : -120
+  }
+
+  /// Turns the echo gate on when speech starts playing on the built-in speaker; queue only.
+  private func speechStarted() {
+    let onSpeaker = AVAudioSession.sharedInstance().currentRoute.outputs.contains {
+      $0.portType == .builtInSpeaker
+    }
+    guard onSpeaker else { return }
+    echoGate.withLock { $0.until = .infinity }
+  }
+
+  /// Turns the echo gate off once the room's echo dies down, and logs what it held back so the
+  /// threshold can be checked against real echo; queue only.
+  private func speechStopped() {
+    let summary = echoGate.withLock { gate -> (Double, Int)? in
+      guard gate.until == .infinity else { return nil }
+      gate.until = ProcessInfo.processInfo.systemUptime + Self.echoTail
+      defer {
+        gate.loudestHeld = -120
+        gate.passed = 0
+      }
+      return (gate.loudestHeld, gate.passed)
+    }
+    guard let (loudestHeld, passed) = summary else { return }
+    Self.logger.notice(
+      """
+      Echo gate: loudest held back \(loudestHeld, format: .fixed(precision: 1), privacy: .public) \
+      dBFS, \(passed, privacy: .public) louder chunks let through
+      """)
   }
 
   private func schedule(_ base64: String) {
@@ -373,6 +491,7 @@ public final class T3VoiceAudioModule: Module {
       prerollDeadline = nil
       player.play()
       playing = true
+      speechStarted()
       return
     }
     guard prerollDeadline == nil else { return }
@@ -382,6 +501,7 @@ public final class T3VoiceAudioModule: Module {
       guard !self.playing, self.queuedFrames > 0, self.engine?.isRunning == true else { return }
       self.player?.play()
       self.playing = true
+      self.speechStarted()
     }
     prerollDeadline = deadline
     queue.asyncAfter(deadline: .now() + Self.prerollTimeout, execute: deadline)
@@ -394,6 +514,8 @@ public final class T3VoiceAudioModule: Module {
     if queuedFrames == 0, playing {
       player?.pause()
       playing = false
+      speechStopped()
+      Self.logger.notice("Speech buffer ran dry; waiting for more")
     }
   }
 
@@ -401,6 +523,7 @@ public final class T3VoiceAudioModule: Module {
     playbackGeneration += 1
     queuedFrames = 0
     playing = false
+    speechStopped()
     prerollDeadline?.cancel()
     prerollDeadline = nil
   }
@@ -414,4 +537,14 @@ final class VoiceAudioException: GenericException<String>, @unchecked Sendable {
   }
 
   var microphoneUnavailable: Bool { param == Self.noMicrophone }
+}
+
+/// Silences quiet microphone chunks while the agent talks on the speaker, until `until`.
+private struct EchoGate {
+  var until: TimeInterval = 0
+  /// Since speech started: the loudest chunk silenced, and how many louder ones went through.
+  var loudestHeld = -120.0
+  var passed = 0
+
+  func isActive(at now: TimeInterval) -> Bool { now < until }
 }

@@ -439,7 +439,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "voice-agent",
     title: "Voice agent",
     to: "/settings/general",
-    searchTerms: ["voice speech talk microphone gemini live hands-free push to talk"],
+    searchTerms: [
+      "voice speech talk microphone gemini live openai realtime hands-free push to talk",
+    ],
   },
   {
     id: "dictation",
@@ -450,16 +452,28 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "voice-agent-provider",
+    title: "Voice agent provider",
+    to: "/settings/general",
+    searchTerms: ["voice agent model gemini live openai realtime gpt google search"],
+  },
+  {
     id: "voice-agent-api-key",
     title: "Gemini API key",
     to: "/settings/general",
-    searchTerms: ["voice agent gemini api key token google ai studio"],
+    searchTerms: ["voice agent dictation gemini api key token google ai studio"],
+  },
+  {
+    id: "voice-agent-openai-api-key",
+    title: "OpenAI API key",
+    to: "/settings/general",
+    searchTerms: ["voice agent openai realtime api key token platform"],
   },
   {
     id: "voice-agent-voice",
     title: "Voice agent voice",
     to: "/settings/general",
-    searchTerms: ["voice agent speaker sound gemini puck kore"],
+    searchTerms: ["voice agent speaker sound gemini puck kore openai marin cedar"],
   },
   {
     id: "voice-agent-pace",

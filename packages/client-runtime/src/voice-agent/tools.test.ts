@@ -3,7 +3,7 @@ import * as DateTime from "effect/DateTime";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { EnvironmentProject, EnvironmentThreadShell } from "../state/models.ts";
-import { createVoiceAgentTools, type VoiceAgentWorkspace } from "./tools.ts";
+import { createVoiceAgentTools, excerpt, type VoiceAgentWorkspace } from "./tools.ts";
 
 const NOW = Date.parse("2026-10-11T12:00:00.000Z");
 
@@ -14,6 +14,10 @@ const thread = (
     environmentId: "env-a",
     projectId: "project-1",
     runtime: null,
+    latestRun: null,
+    lastVisitedAt: null,
+    settledOverride: null,
+    snoozedUntil: null,
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     archivedAt: null,
@@ -38,6 +42,13 @@ function setup(projection: Partial<OrchestrationV2ThreadProjection> = {}) {
       thread({ id: "t-idle", title: "Refactor billing", updatedAt: "2026-10-11T11:50:00.000Z" }),
       thread({ id: "t-approval", title: "Fix login", hasPendingApprovals: true }),
       thread({ id: "t-old", title: "Archived work", archivedAt: "2026-10-01T00:00:00.000Z" }),
+      thread({
+        id: "t-done",
+        title: "Bump dependencies",
+        latestRun: { completedAt: "2026-10-11T11:40:00.000Z" },
+        lastVisitedAt: "2026-10-11T11:00:00.000Z",
+      }),
+      thread({ id: "t-settled", title: "Old login spike", settledOverride: "settled" }),
     ],
     projects: () => [project("project-1", "Web app")],
     environmentLabel: () => "Workstation",
@@ -53,6 +64,7 @@ function setup(projection: Partial<OrchestrationV2ThreadProjection> = {}) {
     })),
     sendMessage: vi.fn(async () => {}),
     stopTurn: vi.fn(async () => {}),
+    setSettled: vi.fn(async () => {}),
     respondToApproval: vi.fn(async () => {}),
     answerQuestion: vi.fn(async () => {}),
     openThread: vi.fn(),
@@ -69,6 +81,7 @@ describe("voice agent tools", () => {
     const listed = JSON.parse(await call("list_threads", {}));
     expect(listed.threads.map((entry: { threadId: string }) => entry.threadId)).toEqual([
       "t-approval",
+      "t-done",
       "t-idle",
     ]);
     expect(listed.threads[0]).toMatchObject({
@@ -194,16 +207,80 @@ describe("voice agent tools", () => {
     expect(workspace.startThread).toHaveBeenCalledWith(
       expect.objectContaining({ id: "project-1" }),
       "Add dark mode",
-      true,
+      { worktree: true },
     );
     expect(started).toMatchObject({ threadId: "t-new", runsIn: "a new worktree off main" });
 
     await call("start_thread", { projectId: "project-1", message: "Fix the footer" });
     // Left out: the project's default decides.
-    expect(workspace.startThread).toHaveBeenLastCalledWith(
-      expect.anything(),
-      "Fix the footer",
-      undefined,
+    expect(workspace.startThread).toHaveBeenLastCalledWith(expect.anything(), "Fix the footer", {});
+
+    await call("start_thread", {
+      projectId: "project-1",
+      message: "Port the player",
+      baseBranch: " watchfree-imui ",
+    });
+    expect(workspace.startThread).toHaveBeenLastCalledWith(expect.anything(), "Port the player", {
+      baseBranch: "watchfree-imui",
+    });
+  });
+
+  it("reports the app's Done check, and keeps settled threads out unless asked or searched for", async () => {
+    const { call } = setup();
+    const active = JSON.parse(await call("list_threads", {}));
+    expect(
+      active.threads.find((entry: { threadId: string }) => entry.threadId === "t-done"),
+    ).toMatchObject({
+      status: "done",
+    });
+    expect(
+      active.threads.some((entry: { threadId: string }) => entry.threadId === "t-settled"),
+    ).toBe(false);
+
+    const settled = JSON.parse(await call("list_threads", { include: "settled" }));
+    expect(settled.threads).toEqual([
+      expect.objectContaining({ threadId: "t-settled", settled: true }),
+    ]);
+
+    const searched = JSON.parse(await call("list_threads", { query: "login" }));
+    expect(searched.threads.map((entry: { threadId: string }) => entry.threadId)).toEqual([
+      "t-approval",
+      "t-settled",
+    ]);
+  });
+
+  it("settles and reopens threads", async () => {
+    const { workspace, call } = setup();
+    await expect(call("settle_thread", { threadId: "t-done" })).resolves.toBe("Settled.");
+    expect(workspace.setSettled).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "t-done" }),
+      true,
     );
+    await expect(call("settle_thread", { threadId: "t-settled" })).resolves.toBe(
+      "That thread is already settled.",
+    );
+    await expect(call("reopen_thread", { threadId: "t-settled" })).resolves.toBe("Reopened.");
+    expect(workspace.setSettled).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: "t-settled" }),
+      false,
+    );
+  });
+
+  it("keeps the end of a long message, where an agent's question usually is", async () => {
+    const long = `${"Context. ".repeat(900)}Should I also update the README?`;
+    const earlier = `${"Earlier detail. ".repeat(100)}Done with step one?`;
+    const { call } = setup({
+      messages: [
+        { role: "assistant", text: earlier },
+        { role: "assistant", text: long },
+      ],
+      runtimeRequests: [],
+      turnItems: [],
+    } as unknown as Partial<OrchestrationV2ThreadProjection>);
+    const read = JSON.parse(await call("read_thread", { threadId: "t-idle" }));
+    expect(read.messages[1].text.endsWith("Should I also update the README?")).toBe(true);
+    expect(read.messages[1].text).toContain("characters omitted");
+    expect(read.messages[0].text.endsWith("Done with step one?")).toBe(true);
+    expect(excerpt("short", 100)).toBe("short");
   });
 });

@@ -4,12 +4,7 @@ import { useSyncExternalStore } from "react";
 
 import { mobilePreferencesAtom } from "../../state/preferences";
 import { isVoiceAgentAudioAvailable } from "./nativeVoiceAudio";
-import {
-  startVoiceAgent,
-  stopVoiceAgent,
-  subscribeVoiceAgent,
-  voiceAgentController,
-} from "./voiceAgentSession";
+import { subscribeVoiceAgent, toggleVoiceAgent, voiceAgentController } from "./voiceAgentSession";
 
 const readActive = () => {
   const { phase } = voiceAgentController.getState();
@@ -25,5 +20,5 @@ export function useVoiceAgentToggle() {
     isVoiceAgentAudioAvailable &&
     AsyncResult.isSuccess(preferences) &&
     preferences.value.voiceAgentEnabled === true;
-  return { visible, active, toggle: active ? stopVoiceAgent : startVoiceAgent } as const;
+  return { visible, active, toggle: toggleVoiceAgent } as const;
 }

@@ -7,7 +7,12 @@ import { useEnvironments } from "../../state/environments";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import { parseActiveThreadPath } from "../keyboard/hardwareKeyboardCommands";
 import { isVoiceAgentAudioAvailable } from "./nativeVoiceAudio";
-import { setVoiceAgentHost, stopVoiceAgent, voiceAgentController } from "./voiceAgentSession";
+import {
+  setVoiceAgentHost,
+  setVoiceAgentProvider,
+  stopVoiceAgent,
+  voiceAgentController,
+} from "./voiceAgentSession";
 
 /**
  * Connects the app-wide voice session to the navigator: the thread on screen,
@@ -21,7 +26,10 @@ export function VoiceAgentHost(props: { readonly pathname: string }) {
   const preferences = useAtomValue(mobilePreferencesAtom);
   const settings = AsyncResult.isSuccess(preferences) ? preferences.value : null;
   const enabled = isVoiceAgentAudioAvailable && settings?.voiceAgentEnabled === true;
-  const voice = settings?.voiceAgentVoice ?? "";
+  const provider = settings?.voiceAgentProvider ?? "gemini";
+  // Each provider has its own voices, so each keeps its own choice.
+  const voice =
+    (provider === "openai" ? settings?.voiceAgentOpenAIVoice : settings?.voiceAgentVoice) ?? "";
   const pace = settings?.voiceAgentPace ?? "normal";
   const mode = settings?.voiceAgentMode;
 
@@ -49,6 +57,9 @@ export function VoiceAgentHost(props: { readonly pathname: string }) {
   useEffect(() => {
     if (!enabled) stopVoiceAgent();
   }, [enabled]);
+  useEffect(() => {
+    setVoiceAgentProvider(provider);
+  }, [provider]);
   useEffect(() => {
     void voiceAgentController.setSpeech({ voice: voice === "" ? null : voice, pace });
   }, [voice, pace]);
