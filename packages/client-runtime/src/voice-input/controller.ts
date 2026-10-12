@@ -6,7 +6,11 @@ import {
   VoiceTranscriptionError,
 } from "./transcription.ts";
 
-export const VOICE_RECORDING_LIMIT_SECONDS = 5 * 60;
+/**
+ * Long enough to ramble. Gemini takes the recording inline (up to 20 MB per request), which
+ * speech-quality AAC keeps well under at this length.
+ */
+export const VOICE_RECORDING_LIMIT_SECONDS = 20 * 60;
 
 export type VoiceInputPhase = "idle" | "preparing" | "recording" | "transcribing" | "error";
 
