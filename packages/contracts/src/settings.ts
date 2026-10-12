@@ -1269,8 +1269,6 @@ export const ServerSettings = Schema.Struct({
   usageLimitSources: Schema.Record(UsageLimitSourceId, UsageLimitSourceConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
-  /** Kept in the secret store; clients only see whether one is saved. */
-  voiceAgentGeminiApiKey: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   cursorKeychainUsageEnabled: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
@@ -1545,8 +1543,6 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Record(UsageLimitSourceId, Schema.NullOr(UsageLimitSourceConfig)),
   ),
   cursorKeychainUsageEnabled: Schema.optionalKey(Schema.Boolean),
-  /** An empty string removes the saved key. */
-  voiceAgentGeminiApiKey: Schema.optionalKey(TrimmedString),
 
   usagePriceOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, Schema.NullOr(UsageModelPriceOverride)),

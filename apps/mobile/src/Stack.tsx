@@ -122,6 +122,7 @@ import { ScheduledTaskEditorProvider } from "./features/settings/scheduled-task-
 import { SettingsKeyboardRouteScreen } from "./features/settings/SettingsKeyboardRouteScreen";
 import { SettingsLegalRouteScreen } from "./features/settings/SettingsLegalRouteScreen";
 import { SettingsMicrophoneRouteScreen } from "./features/settings/SettingsMicrophoneRouteScreen";
+import { SettingsVoiceAgentRouteScreen } from "./features/settings/SettingsVoiceAgentRouteScreen";
 import {
   SettingsOpenSourceLicenseRouteScreen,
   SettingsOpenSourceLicensesRouteScreen,
@@ -141,6 +142,7 @@ import {
   SettingsLegalDocumentExternalHeaderButton,
 } from "./features/settings/components/SettingsLegalDocumentRouteScreen";
 import { useAppShortcuts } from "./features/shortcuts/useAppShortcuts";
+import { VoiceAgentHost } from "./features/voice-agent/VoiceAgentHost";
 import { useIncomingShare } from "./features/sharing/IncomingShareProvider";
 import {
   EMPTY_INCOMING_SHARE_PRESENTATION_STATE,
@@ -332,6 +334,13 @@ const SettingsContentStack = createV5SheetStackNavigator({
       linking: "microphone",
       options: {
         title: "Microphone",
+      },
+    }),
+    SettingsVoiceAgent: createNativeStackScreen({
+      screen: SettingsVoiceAgentRouteScreen,
+      linking: "voice-agent",
+      options: {
+        title: "Voice Agent",
       },
     }),
     SettingsFollowUp: createNativeStackScreen({
@@ -642,6 +651,7 @@ function RootStackLayout(props: {
   return (
     <HardwareKeyboardCommandProvider pathname={pathname}>
       <ThreadOutboxDrainWorker />
+      <VoiceAgentHost pathname={workspaceLocation.pathname} />
       <ShowcaseCaptureCoordinator pathname={pathname} />
       <ExistingThreadSettingsRouteProvider>
         <WorkspaceConnectionStatusProvider>

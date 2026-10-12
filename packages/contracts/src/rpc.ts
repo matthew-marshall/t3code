@@ -27,12 +27,6 @@ import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
-  VoiceAgentCallToolInput,
-  VoiceAgentCallToolResult,
-  VoiceAgentError,
-  VoiceAgentSession,
-} from "./voiceAgent.ts";
-import {
   CodexAuthCallbackInput,
   CodexAuthCallbackState,
   ProviderAuthCancelInput,
@@ -527,10 +521,6 @@ export const WS_METHODS = {
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
 
-  // Voice agent methods
-  voiceAgentCreateSession: "voiceAgent.createSession",
-  voiceAgentCallTool: "voiceAgent.callTool",
-
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
 
@@ -919,18 +909,6 @@ const WsServerSignalProcessRpc = Rpc.make(WS_METHODS.serverSignalProcess, {
   payload: ServerSignalProcessInput,
   success: ServerSignalProcessResult,
   error: EnvironmentAuthorizationError,
-});
-
-const WsVoiceAgentCreateSessionRpc = Rpc.make(WS_METHODS.voiceAgentCreateSession, {
-  payload: Schema.Struct({}),
-  success: VoiceAgentSession,
-  error: Schema.Union([VoiceAgentError, EnvironmentAuthorizationError]),
-});
-
-const WsVoiceAgentCallToolRpc = Rpc.make(WS_METHODS.voiceAgentCallTool, {
-  payload: VoiceAgentCallToolInput,
-  success: VoiceAgentCallToolResult,
-  error: Schema.Union([VoiceAgentError, EnvironmentAuthorizationError]),
 });
 
 const WsCloudGetRelayClientStatusRpc = Rpc.make(WS_METHODS.cloudGetRelayClientStatus, {
@@ -1953,8 +1931,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetUsageSummaryRpc,
   WsServerRefreshUsageRatesRpc,
   WsServerSignalProcessRpc,
-  WsVoiceAgentCreateSessionRpc,
-  WsVoiceAgentCallToolRpc,
   WsScheduledTasksListRpc,
   WsScheduledTasksSubscribeRpc,
   WsScheduledTasksUpsertRpc,

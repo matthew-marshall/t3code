@@ -1333,14 +1333,6 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:check-otlp-endpoint",
       tag: WS_METHODS.serverCheckOtlpEndpoint,
     }),
-    createVoiceSession: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:voice-agent:create-session",
-      tag: WS_METHODS.voiceAgentCreateSession,
-    }),
-    callVoiceTool: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:voice-agent:call-tool",
-      tag: WS_METHODS.voiceAgentCallTool,
-    }),
     retryResourceTelemetry: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:retry-resource-telemetry",
       tag: WS_METHODS.serverRetryResourceTelemetry,

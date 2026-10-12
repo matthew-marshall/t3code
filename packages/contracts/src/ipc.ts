@@ -1052,6 +1052,10 @@ export interface DesktopBridge {
   getLocalEnvironmentBearerToken: () => Promise<string>;
   getClientSettings: () => Promise<ClientSettings | null>;
   setClientSettings: (settings: ClientSettings) => Promise<void>;
+  /** The voice agent's Gemini key, encrypted with the OS keychain; null when none is saved. */
+  getVoiceAgentKey?: () => Promise<string | null>;
+  /** An empty key removes the saved one. */
+  setVoiceAgentKey?: (key: string) => Promise<void>;
   getConnectionCatalog?: () => Promise<string | null>;
   setConnectionCatalog?: (catalog: string) => Promise<boolean>;
   clearConnectionCatalog?: () => Promise<void>;

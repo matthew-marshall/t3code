@@ -1,19 +1,37 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
+import { readGeminiKey, saveGeminiKey, subscribeGeminiKey } from "~/voice/geminiKey";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { toastManager } from "../ui/toast";
 
-/**
- * Saves the Gemini key on the environment. The server keeps it in its secret
- * store and only reports whether one is saved, so the field never shows it.
- */
-export function VoiceAgentApiKeyControl({
-  saved,
-  onSave,
-}: {
-  readonly saved: boolean;
-  readonly onSave: (apiKey: string) => void;
-}) {
+/** Whether a key is saved on this device; the field never shows it. */
+function useGeminiKeySaved(): boolean {
+  const [saved, setSaved] = useState(false);
+  useEffect(() => {
+    const refresh = () =>
+      void readGeminiKey().then(
+        (key) => setSaved(key !== null && key.length > 0),
+        () => setSaved(false),
+      );
+    refresh();
+    return subscribeGeminiKey(refresh);
+  }, []);
+  return saved;
+}
+
+const onSave = (apiKey: string) =>
+  void saveGeminiKey(apiKey).catch((error: unknown) =>
+    toastManager.add({
+      type: "error",
+      title: "Could not save the Gemini API key",
+      description: error instanceof Error ? error.message : undefined,
+    }),
+  );
+
+/** Saves the Gemini key on this device. It is only ever sent to Google. */
+export function VoiceAgentApiKeyControl() {
+  const saved = useGeminiKeySaved();
   const [draft, setDraft] = useState("");
   const apiKey = draft.trim();
   return (

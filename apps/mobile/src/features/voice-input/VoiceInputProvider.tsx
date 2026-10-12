@@ -21,15 +21,10 @@ import {
   type ReactNode,
 } from "react";
 import { AppState, Platform } from "react-native";
-import { AsyncResult } from "effect/reactivity";
 import { useSharedValue } from "react-native-reanimated";
 
-import {
-  microphoneOrder,
-  preferredMicrophoneInput,
-  rememberMicrophones,
-} from "../../lib/microphonePriority";
 import { getLocalVoiceTranscriber } from "../../native/voiceTranscription";
+import { selectPreferredMicrophone } from "../../state/microphone-selection";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { getNativeShowcaseScene } from "../showcase/nativeShowcaseScene";
 import {
@@ -135,20 +130,7 @@ function useVoiceInputRuntime() {
         });
       },
       // Read when recording starts so preference changes do not re-render every composer.
-      selectInput: (inputs) => {
-        const preferences = registry.get(mobilePreferencesAtom);
-        if (!AsyncResult.isSuccess(preferences)) return null;
-        const known = microphoneOrder(preferences.value.microphones);
-        const order = rememberMicrophones(known, inputs);
-        if (order !== known) {
-          registry.set(updateMobilePreferencesAtom, {
-            transform: (current) => ({
-              microphones: rememberMicrophones(microphoneOrder(current.microphones), inputs),
-            }),
-          });
-        }
-        return preferredMicrophoneInput(inputs, order);
-      },
+      selectInput: (inputs) => selectPreferredMicrophone(registry, inputs),
     });
     recorderRef.current = recorder;
     sessionRef.current = new VoiceInputSession({

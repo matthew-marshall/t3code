@@ -15,7 +15,7 @@ export interface MicrophoneDevice {
 
 export type MicrophoneEntry = { readonly kind: MicrophoneKind } | MicrophoneDevice;
 
-interface MicrophoneInput {
+export interface MicrophoneInput {
   readonly uid: string;
   readonly name: string;
   readonly type: string;

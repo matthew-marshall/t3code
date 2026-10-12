@@ -1,5 +1,3 @@
-import type { VoiceAgentFunctionDeclaration } from "@t3tools/contracts";
-
 /**
  * The Gemini Live WebSocket messages the voice session sends and reads.
  * Only the fields the session uses are typed; see
@@ -7,6 +5,13 @@ import type { VoiceAgentFunctionDeclaration } from "@t3tools/contracts";
  */
 
 export type VoiceAgentMode = "push-to-talk" | "hands-free";
+
+/** A tool the model may call; `parametersJsonSchema` is the arguments' JSON Schema. */
+export interface VoiceAgentFunctionDeclaration {
+  readonly name: string;
+  readonly description: string;
+  readonly parametersJsonSchema: unknown;
+}
 
 const LIVE_INPUT_SAMPLE_RATE = 16_000;
 export const LIVE_OUTPUT_SAMPLE_RATE = 24_000;

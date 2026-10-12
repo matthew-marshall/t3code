@@ -10,6 +10,7 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { NativeWorkspaceTabActivityContext } from "../../native/v5-workspace-context";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import { useVoiceAgentToggle } from "../voice-agent/useVoiceAgentToggle";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { useSidebarWorkspaceTabs } from "./useSystemWorkspaceTabBar";
 import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
@@ -37,6 +38,7 @@ export function WorkspaceToolbar(props: {
   const { isTabActive } = workspace;
   const tabActive = use(NativeWorkspaceTabActivityContext)?.active ?? true;
   const { panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
+  const voiceAgent = useVoiceAgentToggle();
   const searchRef = useRef<SearchBarCommands>(null);
   const tab = workspace.state.tabs[workspace.state.selectedTab];
   const selectedTab = workspace.state.selectedTab;
@@ -133,6 +135,13 @@ export function WorkspaceToolbar(props: {
             onPress={focusSearch}
           />
         )}
+        {voiceAgent.visible ? (
+          <Toolbar.Button
+            accessibilityLabel={voiceAgent.active ? "End voice" : "Talk to T3 Code"}
+            icon={voiceAgent.active ? "waveform.circle.fill" : "waveform"}
+            onPress={voiceAgent.toggle}
+          />
+        ) : null}
       </Toolbar>
       <Toolbar placement="bottom">
         {sidebarTabs === "toolbar" ? (
