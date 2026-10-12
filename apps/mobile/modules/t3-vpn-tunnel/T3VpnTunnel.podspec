@@ -11,6 +11,7 @@ Pod::Spec.new do |s|
   s.source_files = 'ios/**/*.swift'
   s.vendored_frameworks = 'Vendor/OCCore.xcframework'
   s.libraries = 'xml2', 'z', 'iconv'
+  s.frameworks = 'NetworkExtension'
   s.swift_version = '5.9'
   s.dependency 'ExpoModulesCore'
 end
