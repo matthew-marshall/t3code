@@ -74,6 +74,8 @@ export interface Preferences {
   readonly composerEnterBehavior?: ComposerEnterBehavior;
   readonly followUpBehavior?: FollowUpBehavior;
   readonly microphones?: ReadonlyArray<MicrophoneEntry>;
+  /** Dictation goes through Gemini 3.5 Transcribe, which drops filler words, instead of the device. */
+  readonly dictationRemovesFillerWords?: boolean;
   /** Device-local counterparts of web's voice agent beta settings. iOS only. */
   readonly voiceAgentEnabled?: boolean;
   /** A prebuilt Gemini voice; empty uses Gemini's default. */
@@ -153,6 +155,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     composerEnterBehavior?: ComposerEnterBehavior;
     followUpBehavior?: FollowUpBehavior;
     microphones?: ReadonlyArray<MicrophoneEntry>;
+    dictationRemovesFillerWords?: boolean;
     voiceAgentEnabled?: boolean;
     voiceAgentVoice?: string;
     voiceAgentPace?: VoiceAgentPace;
@@ -251,6 +254,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
         ? [{ kind: entry.kind, uid: entry.uid, name: entry.name }]
         : [];
     });
+  }
+  if (typeof parsed.dictationRemovesFillerWords === "boolean") {
+    preferences.dictationRemovesFillerWords = parsed.dictationRemovesFillerWords;
   }
   if (typeof parsed.voiceAgentEnabled === "boolean") {
     preferences.voiceAgentEnabled = parsed.voiceAgentEnabled;

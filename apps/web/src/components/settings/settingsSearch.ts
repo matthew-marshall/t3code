@@ -416,6 +416,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["voice speech talk microphone gemini live hands-free push to talk"],
   },
   {
+    id: "dictation",
+    title: "Dictation",
+    to: "/settings/general",
+    searchTerms: [
+      "dictation speech to text transcribe microphone record prompt filler words gemini",
+    ],
+  },
+  {
     id: "voice-agent-api-key",
     title: "Gemini API key",
     to: "/settings/general",

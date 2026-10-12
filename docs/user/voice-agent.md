@@ -18,7 +18,9 @@ every environment you are connected to, with nothing to set up on them.
 The key stays on that device. The desktop app and the iOS app keep it in the
 system keychain; a browser keeps it in its own storage. It is only sent to
 Google, which gives each voice connection a short-lived token. Each device
-needs the key once.
+needs the key once. The same key powers dictation that removes filler words; see
+[Dictation on web and desktop](composer.md#dictation-on-web-and-desktop) and
+[Voice input on iPhone](composer.md#voice-input-on-iphone).
 
 The same setting picks the agent's voice and how quickly it speaks. On web and
 desktop a microphone button then appears at the bottom of the sidebar; on iOS

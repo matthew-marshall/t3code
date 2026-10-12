@@ -1,4 +1,4 @@
-import { RegistryContext, useAtomMount } from "@effect/atom-react";
+import { RegistryContext, useAtomMount, useAtomValue } from "@effect/atom-react";
 import {
   AudioModule,
   RecordingPresets,
@@ -32,6 +32,7 @@ import {
   voiceInputBlocksSubmission,
   type VoiceInputState,
 } from "@t3tools/client-runtime/voice-input";
+import { geminiDictationEnabledAtom, geminiVoiceTranscriber } from "./geminiDictation";
 import { createLazyVoiceRecorder, type LazyVoiceRecorder } from "./lazyVoiceRecorder";
 import { normalizeVoiceInputDecibels, VOICE_WAVEFORM_SAMPLE_COUNT } from "./voiceInputMetering";
 import { VoiceInputSession } from "./voiceInputSession";
@@ -95,6 +96,7 @@ function useVoiceInputRuntime() {
   const registry = use(RegistryContext);
   useAtomMount(mobilePreferencesAtom);
   useAtomMount(updateMobilePreferencesAtom);
+  const geminiDictation = useAtomValue(geminiDictationEnabledAtom);
   const [{ state, ownerKey, label }, setState] = useState({
     state: INITIAL_STATE,
     ownerKey: null as string | null,
@@ -135,7 +137,11 @@ function useVoiceInputRuntime() {
     recorderRef.current = recorder;
     sessionRef.current = new VoiceInputSession({
       recorder,
-      getTranscriber: getLocalVoiceTranscriber,
+      // Read when dictation starts, so switching takes effect on the next recording.
+      getTranscriber: () =>
+        registry.get(geminiDictationEnabledAtom)
+          ? geminiVoiceTranscriber
+          : getLocalVoiceTranscriber(),
       requestPermission: async () => {
         const permission = await requestRecordingPermissionsAsync();
         return { granted: permission.granted, canAskAgain: permission.canAskAgain };
@@ -231,7 +237,10 @@ function useVoiceInputRuntime() {
   const cancel = useCallback(() => controller.cancel(), [controller]);
 
   return {
-    isAvailable: getLocalVoiceTranscriber() !== null || getNativeShowcaseScene() !== null,
+    // Store screenshots show the dictation button even on simulators, whose
+    // on-device transcription is unavailable.
+    isAvailable:
+      geminiDictation || getLocalVoiceTranscriber() !== null || getNativeShowcaseScene() !== null,
     state,
     audioLevels,
     elapsedSeconds,

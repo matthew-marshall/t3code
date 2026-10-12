@@ -202,6 +202,11 @@ import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { getTerminalFocusOwner } from "../../lib/terminalFocus";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../../keybindings";
+import { useComposerDictation } from "../../voice/useComposerDictation";
+import {
+  voiceInputBlocksSubmission,
+  voiceInputFreezesEditor,
+} from "@t3tools/client-runtime/voice-input";
 import {
   type TerminalContextDraft,
   type TerminalContextSelection,
@@ -1055,6 +1060,7 @@ import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
+import { ComposerDictationButton } from "./ComposerDictationButton";
 import {
   BotIcon,
   CircleAlertIcon,
@@ -2354,7 +2360,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedProviderEntry?.snapshot,
     selectedModel,
   );
+  // Dictation writes the normal prompt; it reads the editor and commits through
+  // applyPromptReplacement, both defined further down and only called after render.
+  const dictation = useComposerDictation({
+    ownerKey: composerDraftTargetKey,
+    readText: () => promptRef.current,
+    readSelection: () => composerEditorRef.current?.readSelectionRange() ?? null,
+    commit: (text, selection) => {
+      applyPromptReplacement(0, promptRef.current.length, text, {
+        expandedCursorAfterReplace: selection.end,
+      });
+    },
+  });
+  const dictationError = dictation.state.error;
+  useEffect(() => {
+    if (dictationError === null) return;
+    toastManager.add({ type: "error", title: "Dictation failed", description: dictationError });
+  }, [dictationError]);
   const sendDisabledReason =
+    (voiceInputBlocksSubmission(dictation.state) ? "Finish dictating first." : null) ??
     externalSendDisabledReason ??
     (multipleModelSelections?.length === 0 ? "Select at least one model." : null) ??
     (activePendingProgress
@@ -7204,6 +7228,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     }
                     disabled={
                       isConnecting ||
+                      voiceInputFreezesEditor(dictation.state) ||
                       isComposerApprovalState ||
                       projectSelectionRequired ||
                       isChoiceOnlyPendingQuestion ||
@@ -7321,6 +7346,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         <TooltipPopup>Attach files</TooltipPopup>
                       </Tooltip>
                     </>
+                  ) : null}
+                  {settings.dictationEnabled &&
+                  !activePendingProgress &&
+                  !isComposerApprovalState &&
+                  !projectSelectionRequired ? (
+                    <ComposerDictationButton
+                      state={dictation.state}
+                      shortcutLabel={shortcutLabelForCommand(keybindings, "composer.dictate", {
+                        context: { composerFocus: true, draftThreadRoute: routeKind === "draft" },
+                      })}
+                      onStart={dictation.start}
+                      onStop={dictation.stop}
+                      onCancel={dictation.cancel}
+                    />
                   ) : null}
                   <ComposerFooterPrimaryActions
                     compact={isComposerResting || isComposerPrimaryActionsCompact}

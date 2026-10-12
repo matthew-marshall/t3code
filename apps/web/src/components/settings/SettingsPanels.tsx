@@ -630,6 +630,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.voiceAgentPace !== DEFAULT_UNIFIED_SETTINGS.voiceAgentPace
       ? ["Voice agent speaking pace"]
       : []),
+    ...(settings.dictationEnabled !== DEFAULT_UNIFIED_SETTINGS.dictationEnabled
+      ? ["Dictation"]
+      : []),
     ...(settings.showSkillsInSlashMenu !== DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu
       ? ["Show skills in slash menu"]
       : []),
@@ -757,6 +760,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       voiceAgentEnabled: DEFAULT_UNIFIED_SETTINGS.voiceAgentEnabled,
       voiceAgentVoice: DEFAULT_UNIFIED_SETTINGS.voiceAgentVoice,
       voiceAgentPace: DEFAULT_UNIFIED_SETTINGS.voiceAgentPace,
+      dictationEnabled: DEFAULT_UNIFIED_SETTINGS.dictationEnabled,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       composerCollapseOnScroll: DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
@@ -2713,7 +2717,29 @@ export function GeneralSettingsPanel() {
           }
         />
 
-        {settings.voiceAgentEnabled ? (
+        <SettingsRow
+          {...searchableSetting("dictation")}
+          description="Beta. A microphone button in the composer records a prompt and transcribes it with Gemini 3.5 Transcribe, which removes filler words."
+          resetAction={
+            settings.dictationEnabled !== DEFAULT_UNIFIED_SETTINGS.dictationEnabled ? (
+              <SettingResetButton
+                label="dictation"
+                onClick={() =>
+                  updateSettings({ dictationEnabled: DEFAULT_UNIFIED_SETTINGS.dictationEnabled })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.dictationEnabled}
+              onCheckedChange={(checked) => updateSettings({ dictationEnabled: Boolean(checked) })}
+              aria-label="Dictation"
+            />
+          }
+        />
+
+        {settings.voiceAgentEnabled || settings.dictationEnabled ? (
           <SettingsRow
             {...searchableSetting("voice-agent-api-key")}
             description={
