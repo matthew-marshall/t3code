@@ -19,6 +19,7 @@ import {
   type ThreadUserInputQuestion,
 } from "../state/threadRequests.ts";
 import type { VoiceDictationStore } from "./dictation.ts";
+import type { VoiceAgentMode } from "./liveProtocol.ts";
 import type { VoiceAgentTool } from "./session.ts";
 
 /**
@@ -95,6 +96,7 @@ export const VOICE_AGENT_INSTRUCTIONS = `You are the voice interface for T3 Code
 - Before approving or denying a request, stopping a thread, or starting one, say in a few words what you are about to do and wait for the user to say yes. Never approve on your own judgment.
 - If a request is ambiguous, ask one short clarifying question instead of guessing.
 - When the user wants to dictate or say something long, call start_dictation, say only "Go ahead" or similar, and then stay silent. The transcript arrives as a "[T3 dictation dN]" message: unless it is clear what it is for, ask. To send it or start a thread with it, pass its dictationId instead of retyping it; read the summary back as usual before starting a thread.
+- If the user asks you to stop listening, or to listen again, call set_listening_mode.
 - Only say an action worked after its tool returned success. If a tool failed or its outcome is unknown, say so, and check with list_threads or read_thread before trying again.
 Messages that start with "[T3 update]" come from the app, not the user: mention them briefly when relevant.`;
 
@@ -157,6 +159,13 @@ const stringArg = (args: Record<string, unknown>, name: string): string => {
   }
   return value.trim();
 };
+
+/** What the session lets its tools control. */
+export interface VoiceAgentSessionControls {
+  readonly dictation?: VoiceAgentDictationTools;
+  /** Switches listening mode once the agent is quiet; returns what the agent is told. */
+  readonly setListeningMode?: (mode: VoiceAgentMode) => string;
+}
 
 /** Dictation as the tools see it: the saved transcripts, and a way to start one. */
 export interface VoiceAgentDictationTools {
@@ -221,8 +230,9 @@ const APPROVAL_DECISIONS: Record<string, ProviderApprovalDecision> = {
 export function createVoiceAgentTools(
   workspace: VoiceAgentWorkspace,
   now: () => number = Date.now,
-  dictation?: VoiceAgentDictationTools,
+  controls: VoiceAgentSessionControls = {},
 ): ReadonlyArray<VoiceAgentTool> {
+  const { dictation, setListeningMode } = controls;
   /** "message", or the text of the dictation "dictationId" names. */
   const messageArg = (args: Record<string, unknown>): string => {
     if (typeof args.dictationId === "string" && args.dictationId.trim()) {
@@ -509,6 +519,29 @@ export function createVoiceAgentTools(
       },
     },
     ...(dictation === undefined ? [] : dictationTools(dictation)),
+    ...(setListeningMode === undefined
+      ? []
+      : [
+          {
+            declaration: {
+              name: "set_listening_mode",
+              description:
+                'Switches how the user talks to you: "push-to-talk" (they hold a button while speaking, so you only hear them then) or "hands-free" (the microphone stays open). Use when they ask you to stop listening, or to listen again.',
+              parametersJsonSchema: {
+                type: "object",
+                properties: { mode: { type: "string", enum: ["push-to-talk", "hands-free"] } },
+                required: ["mode"],
+              },
+            },
+            run: async (args: Record<string, unknown>) => {
+              const mode = args.mode;
+              if (mode !== "push-to-talk" && mode !== "hands-free") {
+                throw new Error('mode must be "push-to-talk" or "hands-free".');
+              }
+              return setListeningMode(mode);
+            },
+          } satisfies VoiceAgentTool,
+        ]),
     {
       declaration: {
         name: "stop_thread",

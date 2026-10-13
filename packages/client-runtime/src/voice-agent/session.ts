@@ -2,6 +2,7 @@
 import type { VoiceAgentPace, VoiceAgentProviderId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
+import { type VoiceAgentCue, VoiceAgentCues } from "./cues.ts";
 import {
   endsWithStopPhrase,
   stripStopPhrases,
@@ -111,6 +112,8 @@ export interface VoiceAgentState {
   readonly mode: VoiceAgentMode;
   /** Push-to-talk is held; in hands-free mode the microphone is always open. */
   readonly talking: boolean;
+  /** Hands-free with the microphone muted: nothing is sent until it is unmuted. */
+  readonly muted: boolean;
   readonly agentSpeaking: boolean;
   /** Tools the agent is waiting on, by name. */
   readonly runningTools: ReadonlyArray<string>;
@@ -149,7 +152,8 @@ export interface VoiceAgentAudio {
   /** Drops queued speech when the user interrupts the agent. */
   clearPlayback(): void;
   /** Dictation needs these; a platform without them cannot dictate. */
-  playChime?(kind: "start" | "end"): void;
+  /** A sound cue on the session's output; dictation needs "start" and "end". */
+  playChime?(cue: VoiceAgentCue): void;
   /**
    * On-device speech over the captured microphone. `onText` gets the phrase being spoken, as it
    * changes; a pause starts a new one.
@@ -209,6 +213,10 @@ export interface VoiceAgentSessionDependencies {
   readonly onStateChange: (state: VoiceAgentState) => void;
   /** Receives every `VoiceAgentLogEvent`; the client decides where the log goes. */
   readonly onEvent?: (event: VoiceAgentLogEvent) => void;
+  /** Saves a listening mode the agent switched to, as the client saves the user's own choice. */
+  readonly onModeChange?: (mode: VoiceAgentMode) => void;
+  /** The user's sound cues setting (tool, progress and connection sounds); on when absent. */
+  readonly soundCues?: () => boolean;
   readonly dictation?: {
     readonly store: VoiceDictationStore;
     /** Read when each dictation starts. */
@@ -254,6 +262,7 @@ const initialVoiceAgentState = (mode: VoiceAgentMode): VoiceAgentState => ({
   phase: "idle",
   mode,
   talking: false,
+  muted: false,
   agentSpeaking: false,
   runningTools: [],
   transcript: [],
@@ -321,14 +330,30 @@ export class VoiceAgentSessionController {
   private quietChunks = 0;
   /** The agent asked for dictation; it starts once the agent is quiet. */
   private dictationRequested = false;
+  /** The agent asked to switch listening mode; it switches once the agent is quiet. */
+  private requestedMode: VoiceAgentMode | null = null;
   private dictationStartedAt = 0;
   private dictationLimit: ReturnType<typeof setTimeout> | null = null;
   private stopPhraseTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly cues: VoiceAgentCues;
+  /** Whether the agent has answered since the user last started speaking. */
+  private repliedSinceSpeech = true;
 
   constructor(deps: VoiceAgentSessionDependencies, mode: VoiceAgentMode) {
     this.deps = deps;
     this.provider = deps.provider;
     this.state = initialVoiceAgentState(mode);
+    this.cues = new VoiceAgentCues({
+      play: (cue) => deps.audio.playChime?.(cue),
+      quiet: () =>
+        this.state.dictation === null &&
+        !this.state.talking &&
+        !this.sendingSpeech &&
+        !this.state.agentSpeaking &&
+        this.speechEndsAt <= nowMs(),
+      enabled: () => deps.soundCues?.() ?? true,
+      now: nowMs,
+    });
   }
 
   getState(): VoiceAgentState {
@@ -353,9 +378,11 @@ export class VoiceAgentSessionController {
     this.resumptionHandle = null;
     this.dropQueuedUpdates();
     void this.abandonDictation();
+    this.cues.reset();
     this.update({
       phase: "idle",
       talking: false,
+      muted: false,
       agentSpeaking: false,
       runningTools: [],
       progress: null,
@@ -368,7 +395,7 @@ export class VoiceAgentSessionController {
     if (mode === this.state.mode) {
       return;
     }
-    this.update({ mode, talking: false });
+    this.update({ mode, talking: false, muted: false });
     await this.restartFresh();
   }
 
@@ -411,6 +438,19 @@ export class VoiceAgentSessionController {
     return this.pendingRestart;
   }
 
+  /** Hands-free: stops (or resumes) sending the microphone without ending the session. */
+  setMuted(muted: boolean): void {
+    if (muted === this.state.muted) return;
+    if (muted && this.sendingSpeech) {
+      // End what was being said, so the agent does not wait for more of it.
+      this.sendingSpeech = false;
+      this.quietChunks = 0;
+      this.connection?.pauseAudio();
+    }
+    this.preRoll = [];
+    this.update({ muted });
+  }
+
   /** Push-to-talk pressed: interrupt any speech and open a user turn. */
   beginTalking(): void {
     if (this.state.mode !== "push-to-talk" || this.state.phase !== "live" || this.state.talking) {
@@ -418,6 +458,7 @@ export class VoiceAgentSessionController {
     }
     this.deps.audio.clearPlayback();
     this.connection?.beginTalking();
+    this.repliedSinceSpeech = false;
     this.update({ talking: true, agentSpeaking: false });
   }
 
@@ -447,7 +488,13 @@ export class VoiceAgentSessionController {
   private deliverUpdatesWhenQuiet(): void {
     if (this.updateTimer !== null) clearTimeout(this.updateTimer);
     this.updateTimer = null;
-    if (this.queuedUpdates.length === 0 && !this.dictationRequested) return;
+    if (
+      this.queuedUpdates.length === 0 &&
+      !this.dictationRequested &&
+      this.requestedMode === null
+    ) {
+      return;
+    }
     // Each of these ends with a call back here: the turn completing, `endTalking`, the tools, or
     // a dictation finishing.
     if (this.state.dictation !== null) return;
@@ -457,11 +504,33 @@ export class VoiceAgentSessionController {
       this.updateTimer = setTimeout(() => this.deliverUpdatesWhenQuiet(), playing);
       return;
     }
+    if (this.requestedMode !== null) {
+      const mode = this.requestedMode;
+      this.requestedMode = null;
+      // A new mode needs a new connection; the conversation carries over in its instructions.
+      void this.setMode(mode).then(() => this.deps.onModeChange?.(mode));
+      return;
+    }
     if (this.dictationRequested) {
       void this.beginDictation("agent");
       return;
     }
     this.deliverUpdates();
+  }
+
+  /**
+   * The agent's set_listening_mode tool: switches once the agent has finished speaking, so its
+   * confirmation is heard. Returns what the agent is told.
+   */
+  requestMode(mode: VoiceAgentMode): string {
+    if (mode === this.state.mode && this.requestedMode === null) {
+      return mode === "push-to-talk" ? "It is already push-to-talk." : "It is already hands-free.";
+    }
+    this.requestedMode = mode;
+    this.deliverUpdatesWhenQuiet();
+    return mode === "push-to-talk"
+      ? "Switching to push-to-talk once you stop speaking: confirm in a few words. After that the user holds the talk button to speak."
+      : "Switching to hands-free once you stop speaking: confirm in a few words. After that the microphone stays open.";
   }
 
   /** Whether this platform can dictate: on-device speech and recording are both needed. */
@@ -683,6 +752,9 @@ export class VoiceAgentSessionController {
       onClose: (reason) => {
         if (generation !== this.generation) return;
         this.log({ type: "connection", status: "closed", detail: reason });
+        if (this.state.phase === "live" || this.state.phase === "connecting") {
+          this.cues.connectionDropped();
+        }
         this.socket = null;
         const active = this.state.phase === "live" || this.state.phase === "connecting";
         if (active && this.reconnects < MAX_RECONNECTS) {
@@ -756,6 +828,7 @@ export class VoiceAgentSessionController {
         // The agent stays silent while the user dictates.
         if (this.state.dictation !== null) return;
         this.turnUnderway = true;
+        this.agentReplied();
         this.deps.audio.play(event.data);
         this.speechEndsAt =
           Math.max(this.speechEndsAt, nowMs() + PLAYBACK_MARGIN_MS) + speechMs(event.data);
@@ -763,6 +836,8 @@ export class VoiceAgentSessionController {
         return;
       case "heard":
         this.turnUnderway = true;
+        // Heard and not yet answered: "working" plays until it is, so silence means unheard.
+        if (!this.repliedSinceSpeech) this.cues.awaitReply();
         this.log({ type: "heard", text: event.text });
         this.appendTranscript("user", event.text);
         return;
@@ -773,6 +848,7 @@ export class VoiceAgentSessionController {
       case "turn-complete":
         this.log({ type: "turn-complete" });
         this.turnUnderway = false;
+        this.agentReplied();
         this.update({ agentSpeaking: false });
         this.deliverUpdatesWhenQuiet();
         return;
@@ -782,6 +858,7 @@ export class VoiceAgentSessionController {
         return;
       case "tool-calls":
         this.turnUnderway = true;
+        this.agentReplied();
         void this.runToolCalls(event.calls);
         return;
       case "go-away":
@@ -794,8 +871,14 @@ export class VoiceAgentSessionController {
     }
   }
 
+  private agentReplied(): void {
+    this.repliedSinceSpeech = true;
+    this.cues.replied();
+  }
+
   private sessionReady(): void {
     this.reconnects = 0;
+    this.cues.connectionLive();
     this.log({ type: "connection", status: "live" });
     this.turnUnderway = false;
     this.speechEndsAt = 0;
@@ -837,7 +920,9 @@ export class VoiceAgentSessionController {
   private async runToolCall(call: VoiceToolCall): Promise<VoiceToolResult> {
     this.log({ type: "tool-call", id: call.id, name: call.name, args: call.args });
     const startedAt = nowMs();
+    this.cues.toolStarted();
     const result = await this.callTool(call);
+    this.cues.toolFinished();
     this.log({
       type: "tool-result",
       id: call.id,
@@ -900,7 +985,7 @@ export class VoiceAgentSessionController {
   private captured(chunk: string, level: number): void {
     if (this.state.phase !== "live") return;
     // Dictation listens and records natively; none of it reaches the agent.
-    if (this.state.dictation !== null) return;
+    if (this.state.dictation !== null || this.state.muted) return;
     if (this.state.mode === "push-to-talk") {
       if (this.state.talking) this.connection?.sendAudio(chunk);
       return;
@@ -913,6 +998,7 @@ export class VoiceAgentSessionController {
         return;
       }
       this.sendingSpeech = true;
+      this.repliedSinceSpeech = false;
       this.log({ type: "microphone", status: "speech", level: Math.round(level) });
       for (const held of this.preRoll) this.connection?.sendAudio(held);
       this.preRoll = [];
@@ -954,6 +1040,7 @@ export class VoiceAgentSessionController {
 
   private fail(error: string): void {
     this.log({ type: "error", message: error });
+    this.cues.failed();
     this.dropQueuedUpdates();
     void this.abandonDictation();
     this.update({

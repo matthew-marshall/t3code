@@ -149,9 +149,10 @@ public final class T3VoiceAudioModule: Module {
       DispatchQueue.main.async { self.setRemoteControl(enabled) }
     }
 
-    // "start" or "end" of dictation, on the same route as the agent's voice.
+    // A sound cue (see `Chime`), on the same route as the agent's voice.
     Function("playChime") { (kind: String) in
-      self.queue.async { self.playChime(Chime(rawValue: kind) ?? .start) }
+      guard let chime = Chime(rawValue: kind) else { return }
+      self.queue.async { self.playChime(chime) }
     }
 
     // On-device recognition of the capture. `onSpeech` carries the current segment's text as it
