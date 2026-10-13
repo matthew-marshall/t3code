@@ -9,9 +9,9 @@ const LEAD_MS = 250;
  * Sentences of one paragraph are spoken from one request up to about this many characters:
  * fewer requests stay under the speech model's rate limit, and the voice flows across sentences.
  */
-const GROUP_CHARS = 400;
-/** Waits before retrying a refused request, such as a rate limit; then reading pauses. */
-const RETRY_DELAYS_MS = [1500, 4000];
+const GROUP_CHARS = 1200;
+/** Waits before retrying a refused request: the speech model limits requests per minute. */
+const RETRY_DELAYS_MS = [3000, 10_000, 20_000];
 
 export type ReadoutPhase = "reading" | "paused" | "finished";
 
