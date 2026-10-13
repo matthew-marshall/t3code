@@ -47,6 +47,7 @@ export function SettingsVpnTunnelRouteScreen() {
   const [serverCertPin, setServerCertPin] = useState("");
   const [os, setOs] = useState("linux");
   const [background, setBackground] = useState(false);
+  const [useEsp, setUseEsp] = useState(false);
   const [systemState, setSystemState] = useState<SystemVpnState>("stopped");
   const [state, setState] = useState<{ state: VpnTunnelState; detail?: string }>(() => ({
     state: nativeVpnTunnel?.getState().state ?? "stopped",
@@ -65,6 +66,7 @@ export function SettingsVpnTunnelRouteScreen() {
         setServerCertPin(config.serverCertPin ?? "");
         setOs(config.os);
         setBackground(config.background === true);
+        setUseEsp(config.useEsp === true);
       });
       if (systemVpnAvailable && nativeVpnTunnel !== null) {
         void nativeVpnTunnel.getSystemState().then(setSystemState);
@@ -108,7 +110,7 @@ export function SettingsVpnTunnelRouteScreen() {
   }, []);
 
   /** Saves the form; resolves false (after alerting) when it is incomplete. */
-  const save = async (inBackground = background): Promise<boolean> => {
+  const save = async (inBackground = background, withEsp = useEsp): Promise<boolean> => {
     const parsed = parseGpclientCookieOutput(cookieOutput);
     const port = Number(targetPort);
     if (targetHost.trim() === "" || !Number.isInteger(port) || port <= 0 || port > 65535) {
@@ -131,6 +133,7 @@ export function SettingsVpnTunnelRouteScreen() {
       os: os.trim() || "linux",
       ...(serverCertPin.trim() ? { serverCertPin: serverCertPin.trim() } : {}),
       ...(inBackground ? { background: true } : {}),
+      ...(withEsp ? { useEsp: true } : {}),
     };
     await saveVpnTunnelConfig(config);
     setSaved(config);
@@ -270,6 +273,20 @@ export function SettingsVpnTunnelRouteScreen() {
         ) : null}
 
         <SettingsSection title="Advanced">
+          <SettingsSwitchRow
+            icon={{ ios: "bolt", android: "bolt" }}
+            label="Use UDP (faster)"
+            subtitle="Off keeps the tunnel on HTTPS, which recovers at once after the phone sleeps"
+            value={useEsp}
+            onValueChange={(value) => {
+              setUseEsp(value);
+              if (saved !== null) {
+                void save(background, value).then((ok) => {
+                  if (!ok) setUseEsp(!value);
+                });
+              }
+            }}
+          />
           <ConnectionFormField
             label="Reported OS"
             value={os}

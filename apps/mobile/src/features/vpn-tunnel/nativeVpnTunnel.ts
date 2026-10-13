@@ -16,6 +16,8 @@ export interface VpnTunnelStartOptions {
   readonly targetPort: number;
   readonly serverCertPin?: string;
   readonly os: string;
+  /** Also the faster UDP (ESP) channel; off keeps to TLS. */
+  readonly useEsp?: boolean;
 }
 
 interface NativeVpnTunnelModule {

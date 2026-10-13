@@ -56,6 +56,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     config.cookie = UnsafePointer(strings[1])
     config.os = UnsafePointer(strings[2])
     config.server_cert_pin = pin == nil ? nil : UnsafePointer(strings[3])
+    config.use_esp = (configuration?["useEsp"] as? Bool ?? false) ? 1 : 0
     config.ctx = Unmanaged.passUnretained(self).toOpaque()
     config.log = { ctx, _, message in
       guard let ctx, let message else { return }
