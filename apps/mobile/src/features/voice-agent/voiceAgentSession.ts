@@ -135,9 +135,16 @@ export const voiceAgentController: VoiceAgentSessionController = new VoiceAgentS
     instructions: VOICE_AGENT_INSTRUCTIONS,
     language: Intl.DateTimeFormat().resolvedOptions().locale,
     tools: createVoiceAgentTools(workspace, undefined, {
-      store: dictations,
-      request: () => voiceAgentController.requestDictation(),
+      dictation: { store: dictations, request: () => voiceAgentController.requestDictation() },
+      setListeningMode: (mode) => voiceAgentController.requestMode(mode),
     }),
+    // The agent switched mode when asked; it is saved like the user's own choice.
+    onModeChange: (mode) =>
+      appAtomRegistry.set(updateMobilePreferencesAtom, { voiceAgentMode: mode }),
+    soundCues: () => {
+      const preferences = appAtomRegistry.get(mobilePreferencesAtom);
+      return !AsyncResult.isSuccess(preferences) || preferences.value.voiceAgentSoundCues !== false;
+    },
     describeContext: () => {
       const onScreen = host?.threadOnScreen;
       if (!onScreen) return null;

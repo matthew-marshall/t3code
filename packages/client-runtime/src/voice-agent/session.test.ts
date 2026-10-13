@@ -6,6 +6,7 @@ import type { VoiceAgentMode } from "./liveProtocol.ts";
 import { type VoiceDictationMode, VoiceDictationStore } from "./dictation.ts";
 import {
   VoiceAgentSessionController,
+  type VoiceAgentSessionDependencies,
   type VoiceAgentSocket,
   type VoiceAgentSocketHandlers,
   type VoiceAgentLogEvent,
@@ -47,7 +48,10 @@ const flush = async () => {
   for (let index = 0; index < 10; index += 1) await Promise.resolve();
 };
 
-function harness(mode: VoiceAgentMode = "hands-free") {
+function harness(
+  mode: VoiceAgentMode = "hands-free",
+  extra: Partial<VoiceAgentSessionDependencies> = {},
+) {
   const sockets: Array<FakeSocket> = [];
   const states: Array<VoiceAgentState> = [];
   const events: Array<VoiceAgentLogEvent> = [];
@@ -124,6 +128,7 @@ function harness(mode: VoiceAgentMode = "hands-free") {
       dictation,
       onStateChange: (state) => states.push(state),
       onEvent: (event) => events.push(event),
+      ...extra,
     },
     mode,
   );
@@ -484,6 +489,55 @@ describe("VoiceAgentSessionController", () => {
       expect(h.dictations.get("d1")?.text).toBe("um call the client tomorrow");
       expect(h.events.some((event) => event.type === "dictation-error")).toBe(true);
     });
+  });
+
+  it("switches to push-to-talk when the agent is asked to, once it has confirmed", async () => {
+    vi.useFakeTimers();
+    try {
+      const onModeChange = vi.fn();
+      const h = harness("hands-free", { onModeChange });
+      await h.controller.start();
+      const socket = await h.connect();
+      socket.receive({
+        serverContent: { modelTurn: { parts: [{ inlineData: { data: "AAAA" } }] } },
+      });
+      expect(h.controller.requestMode("push-to-talk")).toContain("Switching to push-to-talk");
+      expect(h.controller.getState().mode).toBe("hands-free");
+
+      socket.receive({ serverContent: { turnComplete: true } });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(h.controller.getState().mode).toBe("push-to-talk");
+      const next = h.sockets.at(-1)!;
+      expect(next).not.toBe(socket);
+      next.open();
+      expect(next.sentOf("setup")[0]!.setup.realtimeInputConfig.automaticActivityDetection).toEqual(
+        { disabled: true },
+      );
+      next.receive({ setupComplete: {} });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(onModeChange).toHaveBeenCalledWith("push-to-talk");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("mutes the hands-free microphone without ending the session", async () => {
+    const h = harness();
+    await h.controller.start();
+    const socket = await h.connect();
+    const sent = () => socket.sentOf("realtimeInput").filter((m) => "audio" in m.realtimeInput);
+    h.speak("one");
+    h.controller.setMuted(true);
+    h.speak("two");
+    expect(sent().map((m) => m.realtimeInput.audio.data)).toEqual(["one"]);
+    // Muting mid-speech ends what was being said.
+    expect(socket.sentOf("realtimeInput").at(-1)).toEqual({
+      realtimeInput: { audioStreamEnd: true },
+    });
+    expect(h.controller.getState()).toMatchObject({ phase: "live", muted: true });
+    h.controller.setMuted(false);
+    h.speak("three");
+    expect(sent().at(-1)!.realtimeInput.audio.data).toBe("three");
   });
 
   it("holds app updates until the agent has finished speaking, so they never cut it off", async () => {

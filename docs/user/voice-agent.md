@@ -42,6 +42,16 @@ a phone in a car mount.
   pause. In a browser, use headphones so it does not hear itself. The iOS app
   cancels its own voice, so hands-free works on the speaker.
 
+You can also ask the agent to stop listening, which switches to push to talk,
+or to listen again.
+
+On iOS, short sounds tell you what is happening when nobody is talking: a blip
+when the agent uses a tool, a soft tick every second or two while a slow tool
+runs or the agent is working out a reply, and a two-note tone when the
+connection drops (rising again when it is back). If you finish speaking and hear
+neither a reply nor ticks, the agent did not hear you. Turn them off under
+**Settings → Voice Agent → Sound cues**.
+
 On iOS the conversation keeps going with the screen locked, so you can use it
 while driving or running. With CarPlay it always uses the car's microphone, so
 you hear the agent through the car. Otherwise it uses a connected headset or

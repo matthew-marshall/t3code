@@ -130,7 +130,11 @@ function createVoiceAgentHandle(initialProvider: VoiceAgentProviderId): VoiceAge
       provider: providers[initialProvider],
       instructions: VOICE_AGENT_INSTRUCTIONS,
       language: navigator.language,
-      tools: createVoiceAgentTools(workspace),
+      tools: createVoiceAgentTools(workspace, undefined, {
+        setListeningMode: (mode) => controller.requestMode(mode),
+      }),
+      // The agent switched mode when asked; it is saved like the user's own choice.
+      onModeChange: (mode) => localStorage.setItem(MODE_STORAGE_KEY, mode),
       describeContext: () => {
         const threadId = latest.current?.threadId;
         const shell =

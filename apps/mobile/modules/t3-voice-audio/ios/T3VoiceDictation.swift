@@ -4,37 +4,73 @@ import os
 
 private let logger = Logger(subsystem: "T3VoiceAudio", category: "dictation")
 
-/// The voice agent's start and end of dictation cues, as Float32 mono buffers in `format`.
+/// The voice agent's sound cues, as Float32 mono buffers in `format`. Each is a few soft bell
+/// tones; the ones that repeat or come often are short and quiet.
 enum Chime: String {
+  /// Dictation starts (rising) and ends (falling).
   case start, end
+  /// A tool call that finished at once.
+  case tool
+  /// A slower tool call starts and ends.
+  case toolStart = "tool-start", toolEnd = "tool-end"
+  /// Every second or two while the agent works: a tool is running, or it is thinking.
+  case working
+  /// The connection dropped and is reconnecting, and is back.
+  case connectionLost = "connection-lost", connectionBack = "connection-back"
+  /// The session stopped on an error.
+  case error
 
-  /// Two soft bell tones about 0.3 s long: rising (C6, G6) to start, falling (G6, C6) to end.
+  private struct Shape {
+    let notes: [Double]
+    let step: Double
+    let noteLength: Double
+    let decay: Double
+    let peak: Float
+  }
+
+  private var shape: Shape {
+    switch self {
+    case .start: return Shape(notes: [1_046.5, 1_568.0], step: 0.12, noteLength: 0.17, decay: 0.07, peak: 0.28)
+    case .end: return Shape(notes: [1_568.0, 1_046.5], step: 0.12, noteLength: 0.17, decay: 0.07, peak: 0.28)
+    case .tool: return Shape(notes: [1_760.0], step: 0, noteLength: 0.05, decay: 0.02, peak: 0.12)
+    case .toolStart:
+      return Shape(notes: [1_318.5, 1_760.0], step: 0.07, noteLength: 0.07, decay: 0.03, peak: 0.13)
+    case .toolEnd:
+      return Shape(notes: [1_760.0, 1_318.5], step: 0.07, noteLength: 0.07, decay: 0.03, peak: 0.13)
+    case .working: return Shape(notes: [523.3], step: 0, noteLength: 0.12, decay: 0.05, peak: 0.09)
+    case .connectionLost:
+      return Shape(notes: [659.3, 440.0], step: 0.18, noteLength: 0.26, decay: 0.12, peak: 0.26)
+    case .connectionBack:
+      return Shape(notes: [440.0, 659.3, 880.0], step: 0.1, noteLength: 0.16, decay: 0.07, peak: 0.22)
+    case .error:
+      return Shape(notes: [392.0, 329.6, 261.6], step: 0.16, noteLength: 0.24, decay: 0.12, peak: 0.26)
+    }
+  }
+
   func buffer(format: AVAudioFormat) -> AVAudioPCMBuffer? {
-    let notes: [Double] = self == .start ? [1_046.5, 1_568.0] : [1_568.0, 1_046.5]
+    let shape = shape
     let rate = format.sampleRate
-    let step = 0.12
-    let noteLength = 0.17
     let attack = 0.008
-    let decay = 0.07
-    let release = 0.03
-    let peak: Float = 0.28
-    let total = AVAudioFrameCount((step * Double(notes.count - 1) + noteLength + 0.01) * rate)
+    let release = min(0.03, shape.noteLength / 3)
+    let total = AVAudioFrameCount(
+      (shape.step * Double(shape.notes.count - 1) + shape.noteLength + 0.01) * rate)
     guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: total),
       let channel = buffer.floatChannelData?[0]
     else { return nil }
     buffer.frameLength = total
     for index in 0..<Int(total) { channel[index] = 0 }
-    for (position, frequency) in notes.enumerated() {
-      let offset = Int(step * Double(position) * rate)
-      let frames = min(Int(noteLength * rate), Int(total) - offset)
+    for (position, frequency) in shape.notes.enumerated() {
+      let offset = Int(shape.step * Double(position) * rate)
+      let frames = min(Int(shape.noteLength * rate), Int(total) - offset)
       for frame in 0..<frames {
         let time = Double(frame) / rate
         let envelope =
-          min(1, time / attack) * exp(-time / decay) * min(1, (noteLength - time) / release)
+          min(1, time / attack) * exp(-time / shape.decay)
+          * min(1, (shape.noteLength - time) / release)
         let phase = 2 * Double.pi * frequency * time
         // A quiet octave above gives the sine a little warmth.
         let tone = sin(phase) + 0.12 * sin(2 * phase)
-        channel[offset + frame] += peak * Float(envelope * tone)
+        channel[offset + frame] += shape.peak * Float(envelope * tone)
       }
     }
     return buffer

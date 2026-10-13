@@ -90,6 +90,8 @@ export interface Preferences {
   readonly voiceAgentOpenAIVoice?: string;
   /** How voice dictation is transcribed; Gemini after the recording by default. */
   readonly voiceAgentDictationMode?: VoiceDictationMode;
+  /** Tool, progress and connection sounds during voice; on unless turned off. */
+  readonly voiceAgentSoundCues?: boolean;
   readonly voiceAgentPace?: VoiceAgentPace;
   readonly voiceAgentMode?: VoiceAgentMode;
   /** @deprecated Kept temporarily so older OTA bundles retain the selected mode. */
@@ -175,6 +177,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     voiceAgentVoice?: string;
     voiceAgentOpenAIVoice?: string;
     voiceAgentDictationMode?: VoiceDictationMode;
+    voiceAgentSoundCues?: boolean;
     voiceAgentPace?: VoiceAgentPace;
     voiceAgentMode?: VoiceAgentMode;
     projectGroupingEnabled?: boolean;
@@ -279,6 +282,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.voiceAgentOpenAIVoice === "string") {
     preferences.voiceAgentOpenAIVoice = parsed.voiceAgentOpenAIVoice;
+  }
+  if (typeof parsed.voiceAgentSoundCues === "boolean") {
+    preferences.voiceAgentSoundCues = parsed.voiceAgentSoundCues;
   }
   if (
     parsed.voiceAgentDictationMode === "gemini-batch" ||
