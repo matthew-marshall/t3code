@@ -248,12 +248,11 @@ static void *oc_thread_main(void *arg)
 		return NULL;
 	}
 	/*
-	 * The in-app tunnel is suspended with the app, and the UDP (ESP) path dies silently while it
-	 * is: traffic then vanished until dead-peer detection, about 50 s, failing every connection
-	 * meanwhile. TLS fails loudly instead and reconnects at once, so the in-app tunnel stays on
-	 * it. A packet tunnel extension is never suspended and keeps the faster ESP.
+	 * TLS only unless asked: a UDP (ESP) path can die silently, as it does while the app is
+	 * suspended, and traffic then vanishes until dead-peer detection, about 50 s. TLS fails loudly
+	 * and reconnects at once. T3's traffic does not need ESP's lower latency.
 	 */
-	if (!core->on_network || openconnect_setup_dtls(v, 60))
+	if (!core->cfg.use_esp || openconnect_setup_dtls(v, 60))
 		openconnect_disable_dtls(v);
 
 	/* Returns 0 only for a pause/detach command, which we never send. */

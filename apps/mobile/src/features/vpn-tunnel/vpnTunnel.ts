@@ -29,6 +29,11 @@ export interface VpnTunnelConfig {
    * and carries only targetHost, instead of the in-app tunnel. targetHost must be an IPv4 address.
    */
   readonly background?: boolean;
+  /**
+   * Also use GlobalProtect's faster UDP (ESP) channel. Off by default: it can die silently after
+   * the phone sleeps, while TLS fails loudly and reconnects at once, and T3 does not need the speed.
+   */
+  readonly useEsp?: boolean;
 }
 
 export async function loadVpnTunnelConfig(): Promise<VpnTunnelConfig | null> {
@@ -192,6 +197,7 @@ export function ensureSystemVpn(config: VpnTunnelConfig): Promise<void> {
             targetPort: config.targetPort,
             os: config.os,
             ...(config.serverCertPin ? { serverCertPin: config.serverCertPin } : {}),
+            useEsp: config.useEsp === true,
           }),
     )
     .finally(() => {
@@ -222,6 +228,7 @@ export function ensureVpnTunnel(config: VpnTunnelConfig): Promise<number> {
       targetPort: config.targetPort,
       os: config.os,
       ...(config.serverCertPin ? { serverCertPin: config.serverCertPin } : {}),
+      useEsp: config.useEsp === true,
     })
     .then((result) => {
       // A newly started tunnel has a new forward.

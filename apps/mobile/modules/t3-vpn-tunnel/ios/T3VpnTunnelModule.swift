@@ -11,6 +11,8 @@ struct VpnTunnelStartOptions: Record {
   @Field var localPort: Int = 0
   @Field var serverCertPin: String?
   @Field var os: String = "linux"
+  /** Also the faster UDP (ESP) channel; off keeps to TLS, which recovers at once. */
+  @Field var useEsp: Bool = false
 }
 
 // Wraps occore (native/occore.h). One tunnel per process; start() resolves with the
@@ -166,6 +168,7 @@ public final class T3VpnTunnelModule: Module {
       "gateway": options.gateway, "targetHost": options.targetHost, "os": options.os,
     ]
     if let pin = options.serverCertPin { configuration["serverCertPin"] = pin }
+    configuration["useEsp"] = options.useEsp
     proto.providerConfiguration = configuration
     proto.disconnectOnSleep = false
     manager.protocolConfiguration = proto
@@ -233,6 +236,7 @@ public final class T3VpnTunnelModule: Module {
     config.server_cert_pin = options.serverCertPin == nil ? nil : UnsafePointer(strings[4])
     config.target_port = UInt16(clamping: options.targetPort)
     config.local_port = UInt16(clamping: options.localPort)
+    config.use_esp = options.useEsp ? 1 : 0
     config.ctx = Unmanaged.passUnretained(self).toOpaque()
     config.log = { ctx, level, message in
       guard let ctx, let message else { return }

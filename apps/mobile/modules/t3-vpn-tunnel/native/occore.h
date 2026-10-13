@@ -36,6 +36,7 @@ typedef struct {
 	const char *client_version; /* optional GP app version */
 	const char *user_agent;     /* optional, defaults to "PAN GlobalProtect" */
 	const char *local_hostname; /* optional */
+	int use_esp;                /* also use the faster UDP (ESP) channel; 0 keeps to TLS */
 
 	const char *target_host;    /* IPv4 literal or hostname resolved via the VPN's DNS */
 	uint16_t target_port;
