@@ -15,9 +15,13 @@ import {
   isIPv4Address,
   loadVpnTunnelConfig,
   parseGpclientCookieOutput,
+  retryTunnelConnections,
   saveVpnTunnelConfig,
   type VpnTunnelConfig,
 } from "../vpn-tunnel/vpnTunnel";
+import { connectionStatusText } from "@t3tools/client-runtime/connection";
+import { useEnvironments } from "../../state/environments";
+import { useWorkstationProbe } from "../vpn-tunnel/useWorkstationProbe";
 import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -69,6 +73,15 @@ export function SettingsVpnTunnelRouteScreen() {
   );
 
   const usingSystemVpn = systemVpnAvailable && saved?.background === true;
+  const probe = useWorkstationProbe(saved);
+  const { environments } = useEnvironments();
+  // The environments whose address is the workstation, so they connect through this tunnel.
+  const tunnelEnvironments =
+    saved === null
+      ? []
+      : environments.filter((environment) =>
+          (environment.displayUrl ?? "").includes(`${saved.targetHost}:${saved.targetPort}`),
+        );
   // The extension keeps its own log; read it when the system VPN changes state.
   useEffect(() => {
     // Mid-connect the extension has little to say; read it once it settles.
@@ -173,7 +186,30 @@ export function SettingsVpnTunnelRouteScreen() {
                   ? "Not signed in"
                   : `${saved.targetHost}:${saved.targetPort} via ${saved.gateway}`}
             </Text>
+            {saved !== null ? (
+              <Text className="text-sm text-foreground-muted">
+                {`Workstation: ${
+                  probe.kind === "ok"
+                    ? `answering · ${probe.ms} ms (HTTP ${probe.status})`
+                    : probe.kind === "failed"
+                      ? `not answering · ${probe.error}`
+                      : probe.reason
+                }`}
+              </Text>
+            ) : null}
+            {tunnelEnvironments.map((environment) => (
+              <Text key={environment.environmentId} className="text-sm text-foreground-muted">
+                {`T3 · ${environment.label}: ${connectionStatusText(environment.connection)}`}
+              </Text>
+            ))}
           </View>
+          {saved !== null ? (
+            <SettingsActionRow
+              icon="arrow.clockwise"
+              label="Retry connections now"
+              onPress={retryTunnelConnections}
+            />
+          ) : null}
         </SettingsSection>
 
         <SettingsSection title="Connection">

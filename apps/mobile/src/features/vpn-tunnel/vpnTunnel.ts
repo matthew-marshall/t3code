@@ -113,6 +113,31 @@ export function rewriteToTunnel(endpoint: DirectEndpoint, localPort: number): Di
   return { httpBaseUrl: rewrite(endpoint.httpBaseUrl), wsBaseUrl: rewrite(endpoint.wsBaseUrl) };
 }
 
+const reachableListeners = new Set<() => void>();
+
+/**
+ * Called when connections through the tunnel can work again: it came up or reconnected, or the
+ * user asked to retry. The app's connections retry at once instead of waiting out their backoff,
+ * which grows to minutes while the tunnel is down.
+ */
+export function onTunnelReachable(listener: () => void): () => void {
+  reachableListeners.add(listener);
+  return () => reachableListeners.delete(listener);
+}
+
+export function retryTunnelConnections(): void {
+  for (const listener of reachableListeners) listener();
+}
+
+nativeVpnTunnel?.addListener("onState", (event) => {
+  if (event.state === "connected") retryTunnelConnections();
+});
+if (nativeVpnTunnel?.systemVpnAvailable) {
+  nativeVpnTunnel.addListener("onSystemState", (event) => {
+    if (event.state === "connected") retryTunnelConnections();
+  });
+}
+
 let pendingStart: Promise<number> | null = null;
 
 // iOS reclaims a suspended app's listening sockets (Apple TN2277). The VPN reconnects by itself

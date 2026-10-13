@@ -34,6 +34,7 @@ import {
   ensureVpnTunnel,
   isTunnelTarget,
   loadVpnTunnelConfig,
+  onTunnelReachable,
   usesSystemVpn,
   rewriteToTunnel,
   VpnTunnelSignInRequiredError,
@@ -134,6 +135,13 @@ const networkPathChanges = Stream.callback<"network-changed">((queue) =>
 const layerWakeups = Wakeups.layer({
   changes: Stream.mergeAll(
     [
+      // The VPN tunnel came back: what failed through it can work now.
+      Stream.callback<"network-changed">((queue) =>
+        Effect.acquireRelease(
+          Effect.sync(() => onTunnelReachable(() => Queue.offerUnsafe(queue, "network-changed"))),
+          (unsubscribe) => Effect.sync(unsubscribe),
+        ).pipe(Effect.asVoid),
+      ),
       Stream.callback<"application-active-probe" | "application-active-reconnect">((queue) =>
         Effect.acquireRelease(
           Effect.sync(() => {
