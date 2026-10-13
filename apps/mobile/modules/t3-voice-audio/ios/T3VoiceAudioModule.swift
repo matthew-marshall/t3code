@@ -88,7 +88,29 @@ public final class T3VoiceAudioModule: Module {
 
   public func definition() -> ModuleDefinition {
     Name("T3VoiceAudio")
-    Events("onCapture", "onInputs", "onError", "onSpeech", "onRemoteCommand")
+    Events("onCapture", "onInputs", "onError", "onSpeech", "onRemoteCommand", "onStartRequested")
+
+    // Siri's "Talk to T3" (StartVoiceAgentIntent, in the app target) asks for a voice session.
+    // A request while the app runs arrives as `onStartRequested`; one that launched it waits here.
+    // A line in the device log, to line feedback up with the native logs around it.
+    Function("logMarker") { (text: String) in
+      Self.logger.notice("\(text, privacy: .public)")
+    }
+
+    Function("takeStartRequest") { () -> Bool in
+      let defaults = UserDefaults.standard
+      let at = defaults.double(forKey: Self.startRequestKey)
+      defaults.removeObject(forKey: Self.startRequestKey)
+      return at > 0 && Date().timeIntervalSince1970 - at < 60
+    }
+
+    OnCreate {
+      self.startObserver = NotificationCenter.default.addObserver(
+        forName: Notification.Name("T3VoiceStartRequested"), object: nil, queue: .main
+      ) { [weak self] _ in
+        self?.sendEvent("onStartRequested", [:])
+      }
+    }
 
     // Activates the voice session and lists its microphones; iOS lists them only then.
     AsyncFunction("prepare") { () -> [[String: String]] in
@@ -212,6 +234,9 @@ public final class T3VoiceAudioModule: Module {
       DispatchQueue.main.async { self.setRemoteControl(false) }
     }
   }
+
+  private static let startRequestKey = "t3.voice.startRequestedAt"
+  private var startObserver: NSObjectProtocol?
 
   /// Main thread only, like MPRemoteCommandCenter.
   private var remoteTargets: [(MPRemoteCommand, Any)] = []

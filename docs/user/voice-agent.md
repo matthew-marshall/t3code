@@ -83,6 +83,27 @@ Either way, Apple's on-device speech listens for the stop phrase. "End
 dictation" works too, but "end" is easily misheard as "and". The first use may
 download Apple's speech model.
 
+## Read aloud
+
+To hear a message itself rather than the agent's summary, ask it to "read
+that message" or to read part of one ("read the conclusion", "read the data
+table"). After a chime, a different voice reads it word for word, using Gemini
+text to speech and the Gemini key. Tables are read row by row and code blocks
+are announced; ask for the code if you want it read out. The agent stays quiet
+and its updates wait until reading ends.
+
+Start talking and reading pauses. Ask to resume, go back a few sentences, read
+a paragraph again, or jump to another part. The Drive tab shows where it is,
+with Pause and Stop. You can also have a dictation read back.
+
+## Feedback for the logs
+
+To note something about the app while it is fresh, say "dictate feedback for the
+logs": it records like a dictation and is saved beside the session log of what
+just happened, without the agent acting on it. Say "flag that" to mark the
+moment with a one-line note instead. On iPhone, feedback is also kept in its own
+file that outlasts the session logs.
+
 ## Good to know
 
 - Before it approves or denies a request, starts a thread, or stops one, the

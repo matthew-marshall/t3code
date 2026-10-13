@@ -43,6 +43,12 @@ interface T3VoiceAudioModule {
   ): EventSubscription;
   /** A play/pause press, while remote control is on. */
   addListener(event: "onRemoteCommand", listener: () => void): EventSubscription;
+  /** Siri's "Talk to T3" while the app runs. */
+  addListener(event: "onStartRequested", listener: () => void): EventSubscription;
+  /** Whether Siri asked for a voice session in the last minute; clears the request. */
+  takeStartRequest(): boolean;
+  /** A line in the device log. */
+  logMarker(text: string): void;
 }
 
 interface RecordedAudio {
@@ -182,4 +188,22 @@ export function createNativeVoiceAudio(
       return (await module?.stopRecording()) ?? null;
     },
   };
+}
+
+/**
+ * Calls `start` when Siri's "Talk to T3" asks for a voice session: one that launched the app, now,
+ * and later ones as they come. Returns the unsubscribe.
+ */
+export function onSiriVoiceRequest(start: () => void): () => void {
+  if (nativeModule === null) return () => {};
+  if (nativeModule.takeStartRequest()) start();
+  const subscription = nativeModule.addListener("onStartRequested", () => {
+    if (nativeModule.takeStartRequest()) start();
+  });
+  return () => subscription.remove();
+}
+
+/** Writes a line to the device log, such as feedback, to find it beside the native logs. */
+export function logDeviceMarker(text: string): void {
+  nativeModule?.logMarker(text);
 }

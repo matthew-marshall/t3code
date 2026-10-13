@@ -280,6 +280,8 @@ const config: ExpoConfig = {
       ...(isIosPersonalTeamBuild
         ? { CFBundleDisplayName: repoEnv.T3CODE_IOS_PERSONAL_TEAM_APP_NAME?.trim() || "T3 VPN" }
         : {}),
+      // What Siri accepts as the app's name in shortcut phrases, whatever the build is called.
+      INAlternativeAppNames: [{ INAlternativeAppName: "T3" }, { INAlternativeAppName: "T3 Code" }],
       NSAppTransportSecurity: {
         NSAllowsArbitraryLoads: true,
       },
@@ -484,6 +486,8 @@ const config: ExpoConfig = {
     "./plugins/withAndroidPredictiveBackCompat.cjs",
     "./plugins/withAndroidTabletOrientation.cjs",
     ...(isIosPacketTunnelBuild ? ["./plugins/withPacketTunnelExtension.cjs"] : []),
+    // "Hey Siri, talk to T3" starts a voice session.
+    "./plugins/withVoiceShortcuts.cjs",
   ],
   extra: {
     appVariant: APP_VARIANT,

@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { EnvironmentProject, EnvironmentThreadShell } from "../state/models.ts";
 import { VoiceDictationStore } from "./dictation.ts";
+import { Readout } from "./readout.ts";
+import type { SpeakableSentence } from "./speakable.ts";
 import { createVoiceAgentTools, excerpt, type VoiceAgentWorkspace } from "./tools.ts";
 
 const NOW = Date.parse("2026-10-11T12:00:00.000Z");
@@ -73,13 +75,37 @@ function setup(projection: Partial<OrchestrationV2ThreadProjection> = {}) {
   const dictations = new VoiceDictationStore();
   const requestDictation = vi.fn(() => "Dictation starts with a chime.");
   const setListeningMode = vi.fn(() => "Switching.");
+  let readout: Readout | null = null;
+  const readAloud = {
+    request: vi.fn(
+      (
+        title: string,
+        sentences: ReadonlyArray<SpeakableSentence>,
+        start = 0,
+        end = sentences.length - 1,
+      ) => {
+        readout = new Readout(title, sentences, {
+          synthesize: async () => "",
+          play: () => {},
+          clearPlayback: () => {},
+          onChange: () => {},
+          onError: () => {},
+        });
+        return `Reading ${start}-${end}.`;
+      },
+    ),
+    current: () => readout,
+    play: vi.fn(),
+    locate: vi.fn(async () => ({ found: true as const, start: 2, end: 3 })),
+  };
   const tools = createVoiceAgentTools(workspace, () => NOW, {
     dictation: { store: dictations, request: requestDictation },
+    readAloud,
     setListeningMode,
   });
   const call = (name: string, args: Record<string, unknown>) =>
     tools.find((tool) => tool.declaration.name === name)!.run(args);
-  return { workspace, call, dictations, requestDictation, setListeningMode };
+  return { workspace, call, dictations, requestDictation, setListeningMode, readAloud };
 }
 
 describe("voice agent tools", () => {
@@ -311,5 +337,35 @@ describe("voice agent tools", () => {
     await expect(call("set_listening_mode", { mode: "push-to-talk" })).resolves.toBe("Switching.");
     expect(setListeningMode).toHaveBeenCalledWith("push-to-talk");
     await expect(call("set_listening_mode", { mode: "off" })).rejects.toThrow("mode must be");
+  });
+
+  it("reads a thread's latest agent message aloud, or just the part asked for", async () => {
+    const { call, readAloud } = setup({
+      messages: [
+        { role: "user", text: "Summarize the run." },
+        {
+          role: "assistant",
+          text: "First point. Second point. The conclusion is clear. It passed.",
+        },
+      ],
+      runtimeRequests: [],
+      turnItems: [],
+    } as unknown as Partial<OrchestrationV2ThreadProjection>);
+
+    await expect(call("read_aloud", { threadId: "t-idle" })).resolves.toBe("Reading 0-3.");
+    expect(readAloud.request.mock.calls[0]![1].map((s: SpeakableSentence) => s.text)).toEqual([
+      "First point.",
+      "Second point.",
+      "The conclusion is clear.",
+      "It passed.",
+    ]);
+
+    await expect(call("read_aloud", { threadId: "t-idle", part: "the conclusion" })).resolves.toBe(
+      "Reading 2-3.",
+    );
+    expect(readAloud.locate).toHaveBeenCalledWith(expect.any(Array), "the conclusion");
+
+    await call("readout_control", { action: "back", sentences: 2 });
+    expect(readAloud.play).toHaveBeenLastCalledWith(0);
   });
 });

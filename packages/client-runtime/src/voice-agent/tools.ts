@@ -19,6 +19,7 @@ import {
   type ThreadUserInputQuestion,
 } from "../state/threadRequests.ts";
 import type { VoiceDictationStore } from "./dictation.ts";
+import { createReadAloudTools, type VoiceAgentReadAloudTools } from "./readAloudTools.ts";
 import type { VoiceAgentMode } from "./liveProtocol.ts";
 import type { VoiceAgentTool } from "./session.ts";
 
@@ -97,6 +98,8 @@ export const VOICE_AGENT_INSTRUCTIONS = `You are the voice interface for T3 Code
 - If a request is ambiguous, ask one short clarifying question instead of guessing.
 - When the user wants to dictate or say something long, call start_dictation, say only "Go ahead" or similar, and then stay silent. The transcript arrives as a "[T3 dictation dN]" message: unless it is clear what it is for, ask. To send it or start a thread with it, pass its dictationId instead of retyping it; read the summary back as usual before starting a thread.
 - If the user asks you to stop listening, or to listen again, call set_listening_mode.
+- Feedback about the app itself goes to the developer through the logs: record_feedback to dictate it, flag_moment for "flag that". Confirm briefly and do not act on it.
+- When the user wants to hear a message itself ("read it", "read the conclusion"), call read_aloud rather than summarizing, then stay silent; pass "part" for part of it. Reading pauses when the user speaks: answer them, and use readout_control to resume, go back, reread or find a part.
 - Only say an action worked after its tool returned success. If a tool failed or its outcome is unknown, say so, and check with list_threads or read_thread before trying again.
 Messages that start with "[T3 update]" come from the app, not the user: mention them briefly when relevant.`;
 
@@ -163,6 +166,14 @@ const stringArg = (args: Record<string, unknown>, name: string): string => {
 /** What the session lets its tools control. */
 export interface VoiceAgentSessionControls {
   readonly dictation?: VoiceAgentDictationTools;
+  readonly readAloud?: VoiceAgentReadAloudTools;
+  /** Feedback about the app for its developer, saved to the logs and not acted on. */
+  readonly feedback?: {
+    /** Starts a feedback dictation once the agent is quiet; returns what the agent is told. */
+    readonly request: () => string;
+    /** Saves a one-line note at this moment; returns its ID. */
+    readonly flag: (note: string) => string;
+  };
   /** Switches listening mode once the agent is quiet; returns what the agent is told. */
   readonly setListeningMode?: (mode: VoiceAgentMode) => string;
 }
@@ -232,7 +243,7 @@ export function createVoiceAgentTools(
   now: () => number = Date.now,
   controls: VoiceAgentSessionControls = {},
 ): ReadonlyArray<VoiceAgentTool> {
-  const { dictation, setListeningMode } = controls;
+  const { dictation, feedback, readAloud, setListeningMode } = controls;
   /** "message", or the text of the dictation "dictationId" names. */
   const messageArg = (args: Record<string, unknown>): string => {
     if (typeof args.dictationId === "string" && args.dictationId.trim()) {
@@ -519,6 +530,57 @@ export function createVoiceAgentTools(
       },
     },
     ...(dictation === undefined ? [] : dictationTools(dictation)),
+    ...(readAloud === undefined
+      ? []
+      : createReadAloudTools(readAloud, {
+          threadMessage: async (threadId, back) => {
+            const thread = findThread({ threadId });
+            const projection = await workspace.readThread(thread);
+            const messages = projection.messages.filter(
+              (message) =>
+                message.role !== "user" && message.role !== "system" && message.text.trim() !== "",
+            );
+            const message = messages.at(-back);
+            if (message === undefined) throw new Error("That thread has no such agent message.");
+            return { title: thread.title, text: message.text };
+          },
+          dictation: (reference) => {
+            const saved = dictation?.store.get(reference);
+            return saved ? { title: `dictation ${saved.id}`, text: saved.text } : null;
+          },
+        })),
+    ...(feedback === undefined
+      ? []
+      : [
+          {
+            declaration: {
+              name: "record_feedback",
+              description:
+                'Dictates feedback about T3 Code or this voice agent for the developer, saved to the logs beside what just happened. Use when the user wants to "dictate feedback" or "leave feedback for the logs". It ends like any dictation.',
+              parametersJsonSchema: { type: "object", properties: {} },
+            },
+            run: async () => feedback.request(),
+          } satisfies VoiceAgentTool,
+          {
+            declaration: {
+              name: "flag_moment",
+              description:
+                'Marks this moment in the logs for the developer, with a one-line note of what the user says went wrong. Use when they say "flag that" or similar, without dictating.',
+              parametersJsonSchema: {
+                type: "object",
+                properties: {
+                  note: {
+                    type: "string",
+                    description: "What the user said was wrong, in a line, or what just happened.",
+                  },
+                },
+                required: ["note"],
+              },
+            },
+            run: async (args: Record<string, unknown>) =>
+              `Flagged as ${feedback.flag(stringArg(args, "note"))}. Confirm in a few words.`,
+          } satisfies VoiceAgentTool,
+        ]),
     ...(setListeningMode === undefined
       ? []
       : [
