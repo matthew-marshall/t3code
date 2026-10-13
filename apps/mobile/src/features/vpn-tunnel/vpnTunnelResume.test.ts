@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   native: {
     getState: vi.fn(() => ({ state: "connected", localPort: 51000 })),
     start: vi.fn(),
+    addListener: vi.fn(() => ({ remove: () => {} })),
     reopenListener: vi.fn(async () => ({ localPort: 51000 })),
   },
 }));

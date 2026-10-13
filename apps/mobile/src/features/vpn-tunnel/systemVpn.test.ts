@@ -1,11 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
+  listeners: new Map<string, (event: { state: string }) => void>(),
   native: {
     systemVpnAvailable: true,
     getSystemState: vi.fn(async () => "stopped"),
     startSystem: vi.fn(async () => {}),
     start: vi.fn(),
+    addListener: vi.fn((event: string, listener: (event: { state: string }) => void) => {
+      mocks.listeners.set(event, listener);
+      return { remove: () => {} };
+    }),
   },
 }));
 
@@ -16,7 +21,13 @@ vi.mock("react-native", () => ({
   AppState: { addEventListener: () => ({ remove: () => {} }) },
 }));
 
-import { ensureSystemVpn, isIPv4Address, usesSystemVpn, type VpnTunnelConfig } from "./vpnTunnel";
+import {
+  ensureSystemVpn,
+  isIPv4Address,
+  onTunnelReachable,
+  usesSystemVpn,
+  type VpnTunnelConfig,
+} from "./vpnTunnel";
 
 const config: VpnTunnelConfig = {
   gateway: "gp.example.test",
@@ -54,5 +65,16 @@ describe("the background (system) VPN", () => {
     expect(isIPv4Address("10.1.2.3")).toBe(true);
     expect(isIPv4Address("workstation.corp.example")).toBe(false);
     expect(isIPv4Address("10.1.2.300")).toBe(false);
+  });
+
+  it("has connections retry at once when either tunnel comes back up", () => {
+    const retry = vi.fn();
+    const unsubscribe = onTunnelReachable(retry);
+    mocks.listeners.get("onState")?.({ state: "connecting" });
+    expect(retry).not.toHaveBeenCalled();
+    mocks.listeners.get("onState")?.({ state: "connected" });
+    mocks.listeners.get("onSystemState")?.({ state: "connected" });
+    expect(retry).toHaveBeenCalledTimes(2);
+    unsubscribe();
   });
 });
