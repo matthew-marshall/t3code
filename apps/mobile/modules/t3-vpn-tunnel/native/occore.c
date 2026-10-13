@@ -247,7 +247,13 @@ static void *oc_thread_main(void *arg)
 		set_state(core, OCCORE_STOPPED, detail);
 		return NULL;
 	}
-	if (openconnect_setup_dtls(v, 60))
+	/*
+	 * The in-app tunnel is suspended with the app, and the UDP (ESP) path dies silently while it
+	 * is: traffic then vanished until dead-peer detection, about 50 s, failing every connection
+	 * meanwhile. TLS fails loudly instead and reconnects at once, so the in-app tunnel stays on
+	 * it. A packet tunnel extension is never suspended and keeps the faster ESP.
+	 */
+	if (!core->on_network || openconnect_setup_dtls(v, 60))
 		openconnect_disable_dtls(v);
 
 	/* Returns 0 only for a pause/detach command, which we never send. */
