@@ -39,6 +39,7 @@ export {
   VOICE_AGENT_INSTRUCTIONS,
   createVoiceAgentTools,
   type VoiceAgentDictationTools,
+  type VoiceAgentSessionControls,
   type VoiceAgentWorkspace,
 } from "./tools.ts";
 export { createVoiceAgentWorkspace, type VoiceAgentWorkspaceSources } from "./workspace.ts";
@@ -54,3 +55,4 @@ export {
   type VoiceDictationMode,
   VoiceDictationStore,
 } from "./dictation.ts";
+export type { VoiceAgentCue } from "./cues.ts";

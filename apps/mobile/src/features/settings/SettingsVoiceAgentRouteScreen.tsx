@@ -267,6 +267,14 @@ export function SettingsVoiceAgentRouteScreen() {
               <MenuValue label="Speaking pace" value={PACE_LABELS[pace]} disabled={!ready} />
             </ControlPillMenu>
           </SettingsControlRow>
+          <SettingsSwitchRow
+            icon="speaker.wave.2"
+            label="Sound cues"
+            subtitle="Blips for tool calls, ticks while the agent works, a tone when the connection drops"
+            disabled={!ready}
+            value={preferences?.voiceAgentSoundCues !== false}
+            onValueChange={(value) => savePreferences({ voiceAgentSoundCues: value })}
+          />
           <SettingsControlRow icon="text.alignleft" label="Dictation">
             <ControlPillMenu
               actions={(["gemini-batch", "on-device"] as const).map((candidate) => ({

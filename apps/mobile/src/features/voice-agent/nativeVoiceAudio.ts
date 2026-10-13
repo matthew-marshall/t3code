@@ -1,4 +1,4 @@
-import type { VoiceAgentAudio } from "@t3tools/client-runtime/voice-agent";
+import type { VoiceAgentAudio, VoiceAgentCue } from "@t3tools/client-runtime/voice-agent";
 import { type EventSubscription, requireOptionalNativeModule } from "expo";
 import { requestRecordingPermissionsAsync } from "expo-audio";
 import { Platform } from "react-native";
@@ -17,7 +17,7 @@ interface T3VoiceAudioModule {
   stop(): Promise<void>;
   play(base64Pcm: string): void;
   clearPlayback(): void;
-  playChime(kind: "start" | "end"): void;
+  playChime(kind: VoiceAgentCue): void;
   /** While on, play/pause presses send `onRemoteCommand`. */
   setRemoteControl(enabled: boolean): void;
   /** Resolves once on-device recognition is ready, which can include downloading its model. */
@@ -52,7 +52,7 @@ interface RecordedAudio {
 
 /** Dictation pieces the native module adds to voice audio, all fed by the same capture. */
 export interface NativeDictationAudio {
-  playChime(kind: "start" | "end"): void;
+  playChime(kind: VoiceAgentCue): void;
   /** Play/pause presses call `onPress` until called again with null. */
   setRemoteControl(onPress: (() => void) | null): void;
   /**

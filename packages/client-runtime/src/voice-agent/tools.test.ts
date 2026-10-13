@@ -72,13 +72,14 @@ function setup(projection: Partial<OrchestrationV2ThreadProjection> = {}) {
   } as unknown as VoiceAgentWorkspace;
   const dictations = new VoiceDictationStore();
   const requestDictation = vi.fn(() => "Dictation starts with a chime.");
+  const setListeningMode = vi.fn(() => "Switching.");
   const tools = createVoiceAgentTools(workspace, () => NOW, {
-    store: dictations,
-    request: requestDictation,
+    dictation: { store: dictations, request: requestDictation },
+    setListeningMode,
   });
   const call = (name: string, args: Record<string, unknown>) =>
     tools.find((tool) => tool.declaration.name === name)!.run(args);
-  return { workspace, call, dictations, requestDictation };
+  return { workspace, call, dictations, requestDictation, setListeningMode };
 }
 
 describe("voice agent tools", () => {
@@ -303,5 +304,12 @@ describe("voice agent tools", () => {
     );
     await expect(call("start_dictation", {})).resolves.toBe("Dictation starts with a chime.");
     expect(requestDictation).toHaveBeenCalled();
+  });
+
+  it("switches listening mode on request", async () => {
+    const { call, setListeningMode } = setup();
+    await expect(call("set_listening_mode", { mode: "push-to-talk" })).resolves.toBe("Switching.");
+    expect(setListeningMode).toHaveBeenCalledWith("push-to-talk");
+    await expect(call("set_listening_mode", { mode: "off" })).rejects.toThrow("mode must be");
   });
 });
