@@ -199,7 +199,8 @@ static void oc_setup_tun(void *privdata)
 			core->tun_attached = 1;
 		}
 		logf_(core, PRG_INFO, "Tunnel address %s, MTU %d", ip->addr, mtu);
-		core->on_network(core->cfg.ctx, ip->addr, mtu, ip->dns[0] ? ip->dns[0] : "",
+		core->on_network(core->cfg.ctx, ip->addr, ip->gateway_addr ? ip->gateway_addr : "", mtu,
+				 ip->dns[0] ? ip->dns[0] : "",
 				 ip->dns[1] ? ip->dns[1] : "", ip->dns[2] ? ip->dns[2] : "");
 		set_state(core, OCCORE_CONNECTED, ip->addr);
 		return;
