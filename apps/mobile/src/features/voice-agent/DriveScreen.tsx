@@ -117,6 +117,35 @@ export function DriveScreen() {
             : `…${heard.slice(-HEARD_CHARS)}`}
         </Text>
       ) : null}
+      {state.readout !== null && state.readout.phase !== "finished" ? (
+        <View className="items-center gap-3">
+          <Text className="text-center text-base text-foreground-muted" numberOfLines={2}>
+            {`${state.readout.phase === "reading" ? "Reading" : "Paused"} · ${state.readout.index + 1} of ${state.readout.count} · ${state.readout.title}`}
+          </Text>
+          <View className="flex-row gap-3">
+            <Pressable
+              accessibilityRole="button"
+              className="h-12 items-center justify-center rounded-full bg-subtle px-6 active:opacity-70"
+              onPress={() =>
+                state.readout?.phase === "reading"
+                  ? voiceAgentController.currentReadout()?.pause()
+                  : voiceAgentController.playReadout()
+              }
+            >
+              <Text className="text-base font-t3-medium text-foreground">
+                {state.readout.phase === "reading" ? "Pause" : "Resume"}
+              </Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              className="h-12 items-center justify-center rounded-full bg-subtle px-6 active:opacity-70"
+              onPress={() => voiceAgentController.currentReadout()?.stop()}
+            >
+              <Text className="text-base font-t3-medium text-foreground">Stop</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
       {state.phase === "error" ? (
         <Text className="text-center text-base text-danger-foreground" numberOfLines={3}>
           {state.error}

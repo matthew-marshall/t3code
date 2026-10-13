@@ -30,6 +30,8 @@ export {
   type VoiceAgentState,
   type VoiceAgentTool,
   type VoiceDictationEnd,
+  type VoiceDictationPurpose,
+  type VoiceFeedback,
   type VoiceDictationState,
   type VoiceRecording,
   type VoiceTranscriptEntry,
@@ -56,3 +58,11 @@ export {
   VoiceDictationStore,
 } from "./dictation.ts";
 export type { VoiceAgentCue } from "./cues.ts";
+export {
+  locateInReadout,
+  READ_ALOUD_MODEL,
+  READ_ALOUD_VOICE,
+  synthesizeSpeech,
+} from "./geminiSpeech.ts";
+export type { VoiceAgentReadAloudTools } from "./readAloudTools.ts";
+export type { ReadoutState } from "./readout.ts";

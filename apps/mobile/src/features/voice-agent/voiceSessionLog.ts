@@ -1,4 +1,4 @@
-import type { VoiceAgentLogEvent } from "@t3tools/client-runtime/voice-agent";
+import type { VoiceAgentLogEvent, VoiceFeedback } from "@t3tools/client-runtime/voice-agent";
 import { Directory, File, Paths } from "expo-file-system";
 
 const DIRECTORY = "voice-logs";
@@ -58,5 +58,26 @@ export function logVoiceEvent(event: VoiceAgentLogEvent | VoiceControlEvent): vo
     if (event.type === "session-end") current = null;
   } catch {
     // Logging must never break voice.
+  }
+}
+
+const FEEDBACK_FILE = "feedback.jsonl";
+
+/**
+ * Keeps feedback in Documents/feedback.jsonl, which is never rotated out like the session logs,
+ * with the session log it was given in, so its context can be found later.
+ */
+export function appendFeedback(feedback: VoiceFeedback): void {
+  try {
+    const file = new File(Paths.document, FEEDBACK_FILE);
+    if (!file.exists) file.create();
+    const line = {
+      ...feedback,
+      at: new Date(feedback.at).toISOString(),
+      sessionLog: current?.name ?? null,
+    };
+    file.write(`${JSON.stringify(line)}\n`, { append: true });
+  } catch {
+    // Feedback is also in the session log.
   }
 }

@@ -12,6 +12,9 @@ import {
   createVoiceAgentTools,
   createVoiceAgentWorkspace,
   describeVoiceThreadUpdates,
+  locateInReadout,
+  READ_ALOUD_VOICE,
+  synthesizeSpeech,
   snapshotVoiceThreads,
   VOICE_AGENT_INSTRUCTIONS,
   type VoiceAgentMode,
@@ -32,8 +35,8 @@ import { serverEnvironment } from "../../state/server";
 import { environmentThreadShells, threadEnvironment } from "../../state/threads";
 import { vcsEnvironment } from "../../state/vcs";
 import { geminiKey, openAIKey } from "./apiKeys";
-import { createNativeVoiceAudio } from "./nativeVoiceAudio";
-import { logVoiceEvent } from "./voiceSessionLog";
+import { createNativeVoiceAudio, logDeviceMarker } from "./nativeVoiceAudio";
+import { appendFeedback, logVoiceEvent } from "./voiceSessionLog";
 
 /** What the session needs from the navigator; `VoiceAgentHost` keeps it current. */
 export interface VoiceAgentHost {
@@ -136,6 +139,18 @@ export const voiceAgentController: VoiceAgentSessionController = new VoiceAgentS
     language: Intl.DateTimeFormat().resolvedOptions().locale,
     tools: createVoiceAgentTools(workspace, undefined, {
       dictation: { store: dictations, request: () => voiceAgentController.requestDictation() },
+      feedback: {
+        request: () => voiceAgentController.requestDictation("feedback"),
+        flag: (note) => voiceAgentController.recordFeedback(note, "flag"),
+      },
+      readAloud: {
+        request: (title, sentences, start, end) =>
+          voiceAgentController.requestReadout(title, sentences, start, end),
+        current: () => voiceAgentController.currentReadout(),
+        play: (start, end) => voiceAgentController.playReadout(start, end),
+        locate: async (sentences, description) =>
+          locateInReadout(await geminiKey.read(), sentences, description),
+      },
       setListeningMode: (mode) => voiceAgentController.requestMode(mode),
     }),
     // The agent switched mode when asked; it is saved like the user's own choice.
@@ -169,6 +184,13 @@ export const voiceAgentController: VoiceAgentSessionController = new VoiceAgentS
       return inputs.find((input) => input.type === "CarAudio") ?? preferred;
     }),
     onEvent: logVoiceEvent,
+    onFeedback: (feedback) => {
+      appendFeedback(feedback);
+      logDeviceMarker(`T3 FEEDBACK ${feedback.id}: ${feedback.text}`);
+    },
+    readAloud: {
+      synthesize: async (text) => synthesizeSpeech(await geminiKey.read(), text, READ_ALOUD_VOICE),
+    },
     dictation: { store: dictations, mode: dictationMode, transcribeRecording: transcribeDictation },
     onStateChange: (state) => {
       if (state.phase === "live" && unsubscribeThreads === null) {

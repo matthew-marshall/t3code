@@ -6,10 +6,11 @@ import { useEffect, useMemo } from "react";
 import { useEnvironments } from "../../state/environments";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import { parseActiveThreadPath } from "../keyboard/hardwareKeyboardCommands";
-import { isVoiceAgentAudioAvailable } from "./nativeVoiceAudio";
+import { isVoiceAgentAudioAvailable, onSiriVoiceRequest } from "./nativeVoiceAudio";
 import {
   setVoiceAgentHost,
   setVoiceAgentProvider,
+  startVoiceAgent,
   stopVoiceAgent,
   voiceAgentController,
 } from "./voiceAgentSession";
@@ -57,6 +58,8 @@ export function VoiceAgentHost(props: { readonly pathname: string }) {
   useEffect(() => {
     if (!enabled) stopVoiceAgent();
   }, [enabled]);
+  // "Hey Siri, talk to T3". Settings load after a cold launch, so the request waits until then.
+  useEffect(() => (enabled ? onSiriVoiceRequest(startVoiceAgent) : undefined), [enabled]);
   useEffect(() => {
     setVoiceAgentProvider(provider);
   }, [provider]);

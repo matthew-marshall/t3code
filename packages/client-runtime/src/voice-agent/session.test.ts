@@ -540,6 +540,79 @@ describe("VoiceAgentSessionController", () => {
     expect(sent().at(-1)!.realtimeInput.audio.data).toBe("three");
   });
 
+  it("reads aloud once the agent is quiet, holding updates and pausing when the user speaks", async () => {
+    vi.useFakeTimers();
+    try {
+      const second = "A".repeat(64_000);
+      const synthesize = vi.fn(async (text: string) => `${text}:${second}`);
+      const h = harness("hands-free", { readAloud: { synthesize } });
+      await h.controller.start();
+      const socket = await h.connect();
+      const texts = () =>
+        socket
+          .sentOf("realtimeInput")
+          .filter((m) => "text" in m.realtimeInput)
+          .map((m) => m.realtimeInput.text as string);
+      const sentences = ["One.", "Two.", "Three."].map((text, block) => ({
+        text,
+        block,
+        kind: "text" as const,
+      }));
+
+      socket.receive({
+        serverContent: { modelTurn: { parts: [{ inlineData: { data: "AAAA" } }] } },
+      });
+      h.controller.requestReadout("Fix login", sentences);
+      expect(synthesize).not.toHaveBeenCalled();
+      socket.receive({ serverContent: { turnComplete: true } });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(h.controller.getState().readout).toMatchObject({ phase: "reading" });
+      expect(h.audio.play).toHaveBeenCalledWith(expect.stringMatching(/^One\./));
+
+      // Updates and the agent's own voice wait while it reads.
+      h.controller.sendUpdate("Billing needs approval.");
+      socket.receive({
+        serverContent: { modelTurn: { parts: [{ inlineData: { data: "BBBB" } }] } },
+      });
+      expect(texts()).toEqual([]);
+      expect(h.audio.play).not.toHaveBeenCalledWith("BBBB");
+
+      h.speak("pcm", -20);
+      expect(h.controller.getState().readout).toMatchObject({ phase: "paused" });
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(texts()).toEqual(["[T3 update] Billing needs approval."]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("saves dictated feedback to the logs instead of handing it to the agent as a dictation", async () => {
+    const onFeedback = vi.fn();
+    const h = harness("hands-free", { onFeedback });
+    await h.controller.start();
+    const socket = await h.connect();
+    h.controller.requestDictation("feedback");
+    await flush();
+    h.dictation.transcribeRecording.mockResolvedValueOnce("The reconnect took too long.");
+    h.controller.finishDictation();
+    await flush();
+    expect(onFeedback).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "f1",
+        text: "The reconnect took too long.",
+        source: "dictation",
+      }),
+    );
+    expect(h.events.find((event) => event.type === "feedback")).toMatchObject({ id: "f1" });
+    expect(h.dictations.list()).toEqual([]);
+    const texts = socket
+      .sentOf("realtimeInput")
+      .filter((m) => "text" in m.realtimeInput)
+      .map((m) => m.realtimeInput.text as string);
+    expect(texts.at(-1)).toContain("saved to the logs as f1");
+    expect(h.controller.recordFeedback("Agent misheard the project.", "flag")).toBe("f2");
+  });
+
   it("holds app updates until the agent has finished speaking, so they never cut it off", async () => {
     vi.useFakeTimers();
     try {

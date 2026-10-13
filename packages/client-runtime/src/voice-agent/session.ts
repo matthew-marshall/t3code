@@ -3,6 +3,8 @@ import type { VoiceAgentPace, VoiceAgentProviderId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 import { type VoiceAgentCue, VoiceAgentCues } from "./cues.ts";
+import { Readout, type ReadoutState } from "./readout.ts";
+import type { SpeakableSentence } from "./speakable.ts";
 import {
   endsWithStopPhrase,
   stripStopPhrases,
@@ -81,6 +83,8 @@ export type VoiceAgentLogEvent =
       readonly onDevice?: string;
     }
   | { readonly type: "dictation-error"; readonly message: string }
+  | ({ readonly type: "feedback" } & VoiceFeedback)
+  | { readonly type: "readout"; readonly title: string; readonly sentences: number }
   /** The provider rejected one request; the session went on. */
   | { readonly type: "provider-error"; readonly message: string }
   | { readonly type: "error"; readonly message: string }
@@ -92,6 +96,17 @@ export type VoiceAgentProgress = "token" | "connecting" | "setup" | "microphone"
 export type VoiceTranscriptRole = "user" | "agent" | "tool" | "update" | "dictation";
 
 /** "remote" is a play/pause button: a steering wheel, headphones or the lock screen. */
+/** A message the agent will act on, or feedback that only goes to the logs. */
+export type VoiceDictationPurpose = "message" | "feedback";
+
+/** Feedback about the app, saved beside the session log for the developer. */
+export interface VoiceFeedback {
+  readonly id: string;
+  readonly text: string;
+  readonly source: "dictation" | "flag";
+  readonly at: number;
+}
+
 export type VoiceDictationEnd = "button" | "phrase" | "remote" | "limit";
 
 /** A dictation in progress: recording until the button or "stop dictation", then transcribing. */
@@ -121,6 +136,8 @@ export interface VoiceAgentState {
   readonly error: string | null;
   readonly progress: VoiceAgentProgress | null;
   readonly dictation: VoiceDictationState | null;
+  /** A message being read aloud, or the last one read, so it can be read again. */
+  readonly readout: ReadoutState | null;
 }
 
 /** An open WebSocket. Each platform wraps its own; message data may be text or binary. */
@@ -213,6 +230,10 @@ export interface VoiceAgentSessionDependencies {
   readonly onStateChange: (state: VoiceAgentState) => void;
   /** Receives every `VoiceAgentLogEvent`; the client decides where the log goes. */
   readonly onEvent?: (event: VoiceAgentLogEvent) => void;
+  /** Speech for reading messages aloud, in a voice unlike the agent's; see `synthesizeSpeech`. */
+  readonly readAloud?: { readonly synthesize: (text: string) => Promise<string> };
+  /** Keeps feedback somewhere it outlives the session logs, and marks it in the device log. */
+  readonly onFeedback?: (feedback: VoiceFeedback) => void;
   /** Saves a listening mode the agent switched to, as the client saves the user's own choice. */
   readonly onModeChange?: (mode: VoiceAgentMode) => void;
   /** The user's sound cues setting (tool, progress and connection sounds); on when absent. */
@@ -269,6 +290,7 @@ const initialVoiceAgentState = (mode: VoiceAgentMode): VoiceAgentState => ({
   error: null,
   progress: null,
   dictation: null,
+  readout: null,
 });
 
 const RECAP_ENTRIES = 12;
@@ -332,8 +354,18 @@ export class VoiceAgentSessionController {
   private dictationRequested = false;
   /** The agent asked to switch listening mode; it switches once the agent is quiet. */
   private requestedMode: VoiceAgentMode | null = null;
+  private readout: Readout | null = null;
+  /** A read-aloud the agent asked for; it starts once the agent is quiet. */
+  private readoutRequest: {
+    readonly title: string;
+    readonly sentences: ReadonlyArray<SpeakableSentence>;
+    readonly start: number;
+    readonly end: number;
+  } | null = null;
   private dictationStartedAt = 0;
   private dictationLimit: ReturnType<typeof setTimeout> | null = null;
+  private dictationPurpose: VoiceDictationPurpose = "message";
+  private nextFeedbackId = 1;
   private stopPhraseTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly cues: VoiceAgentCues;
   /** Whether the agent has answered since the user last started speaking. */
@@ -347,6 +379,7 @@ export class VoiceAgentSessionController {
       play: (cue) => deps.audio.playChime?.(cue),
       quiet: () =>
         this.state.dictation === null &&
+        this.state.readout?.phase !== "reading" &&
         !this.state.talking &&
         !this.sendingSpeech &&
         !this.state.agentSpeaking &&
@@ -379,7 +412,11 @@ export class VoiceAgentSessionController {
     this.dropQueuedUpdates();
     void this.abandonDictation();
     this.cues.reset();
+    this.readoutRequest = null;
+    this.readout?.stop();
+    this.readout = null;
     this.update({
+      readout: null,
       phase: "idle",
       talking: false,
       muted: false,
@@ -457,6 +494,7 @@ export class VoiceAgentSessionController {
       return;
     }
     this.deps.audio.clearPlayback();
+    this.pauseReadoutForUser();
     this.connection?.beginTalking();
     this.repliedSinceSpeech = false;
     this.update({ talking: true, agentSpeaking: false });
@@ -491,10 +529,13 @@ export class VoiceAgentSessionController {
     if (
       this.queuedUpdates.length === 0 &&
       !this.dictationRequested &&
-      this.requestedMode === null
+      this.requestedMode === null &&
+      this.readoutRequest === null
     ) {
       return;
     }
+    // Nothing interrupts a message being read aloud; it all follows once reading stops.
+    if (this.state.readout?.phase === "reading") return;
     // Each of these ends with a call back here: the turn completing, `endTalking`, the tools, or
     // a dictation finishing.
     if (this.state.dictation !== null) return;
@@ -515,7 +556,72 @@ export class VoiceAgentSessionController {
       void this.beginDictation("agent");
       return;
     }
+    if (this.readoutRequest !== null) {
+      this.beginReadout();
+      return;
+    }
     this.deliverUpdates();
+  }
+
+  /**
+   * The agent's read_aloud tool: reads sentences `start` through `end` once the agent stops
+   * speaking. Returns what the agent is told.
+   */
+  requestReadout(
+    title: string,
+    sentences: ReadonlyArray<SpeakableSentence>,
+    start = 0,
+    end = sentences.length - 1,
+  ): string {
+    if (this.deps.readAloud === undefined) return "Reading aloud is not available here.";
+    if (sentences.length === 0) return "There is nothing to read in that message.";
+    this.readoutRequest = { title, sentences, start, end };
+    this.deliverUpdatesWhenQuiet();
+    return `Reading ${end - start + 1} of ${sentences.length} sentences aloud once you stop speaking: say nothing more now. It pauses if the user speaks; use readout_control then.`;
+  }
+
+  /** The current or last read-aloud, for readout_control. */
+  currentReadout(): Readout | null {
+    return this.readout;
+  }
+
+  /** Plays part of the current read-aloud now, with the start chime. */
+  playReadout(start?: number, end?: number): void {
+    if (this.readout === null) return;
+    this.deps.audio.playChime?.("start");
+    this.readout.play(start, end);
+  }
+
+  private beginReadout(): void {
+    const request = this.readoutRequest;
+    const readAloud = this.deps.readAloud;
+    this.readoutRequest = null;
+    if (request === null || readAloud === undefined) return;
+    this.readout?.stop();
+    const readout: Readout = new Readout(request.title, request.sentences, {
+      synthesize: readAloud.synthesize,
+      play: (pcm) => this.deps.audio.play(pcm),
+      clearPlayback: () => this.deps.audio.clearPlayback(),
+      onChange: (state) => {
+        if (this.readout !== readout) return;
+        const finishing = state.phase === "finished" && this.state.readout?.phase === "reading";
+        this.update({ readout: state });
+        if (finishing) {
+          this.deps.audio.playChime?.("end");
+          this.sendUpdate("Finished reading aloud.");
+        }
+        if (state.phase !== "reading") this.deliverUpdatesWhenQuiet();
+      },
+      onError: (message) => this.sendUpdate(`Reading aloud stopped: ${message}`),
+    });
+    this.readout = readout;
+    this.log({ type: "readout", title: request.title, sentences: request.sentences.length });
+    this.playReadout(request.start, request.end);
+  }
+
+  /** The user started talking: reading pauses where it is, and the agent listens. */
+  private pauseReadoutForUser(): void {
+    if (this.state.readout?.phase === "reading") this.readout?.pause();
   }
 
   /**
@@ -555,12 +661,30 @@ export class VoiceAgentSessionController {
    * The agent's start_dictation tool: starts once the agent has finished speaking, so its "go
    * ahead" is not cut off. Returns what the agent is told.
    */
-  requestDictation(): string {
+  requestDictation(purpose: VoiceDictationPurpose = "message"): string {
     if (!this.canDictate()) return "Dictation is not available on this device.";
     if (this.state.dictation !== null) return "A dictation is already in progress.";
     this.dictationRequested = true;
+    this.dictationPurpose = purpose;
     this.deliverUpdatesWhenQuiet();
-    return 'Dictation starts with a chime once you stop speaking: say "Go ahead" or similar, briefly. Do not speak again until a [T3 dictation] message arrives.';
+    return purpose === "feedback"
+      ? 'Feedback dictation starts with a chime once you stop speaking: say "Go ahead" or similar, briefly, then stay silent. It is saved to the logs for the developer; you will only be told it was saved.'
+      : 'Dictation starts with a chime once you stop speaking: say "Go ahead" or similar, briefly. Do not speak again until a [T3 dictation] message arrives.';
+  }
+
+  /**
+   * Saves feedback about the app to the logs, beside what just happened, for the developer to
+   * review later; the agent does not act on it. Returns its ID.
+   */
+  recordFeedback(text: string, source: "dictation" | "flag"): string {
+    const feedback = { id: `f${this.nextFeedbackId++}`, text, source, at: nowMs() };
+    this.log({ type: "feedback", ...feedback });
+    try {
+      this.deps.onFeedback?.(feedback);
+    } catch {
+      // Saving feedback must never break the conversation.
+    }
+    return feedback.id;
   }
 
   /** The dictation button again, or "stop dictation": stops recording and transcribes. */
@@ -570,6 +694,8 @@ export class VoiceAgentSessionController {
   }
 
   private async beginDictation(origin: "button" | "agent"): Promise<void> {
+    // The button always dictates a message; the agent's request says what it is for.
+    if (origin === "button") this.dictationPurpose = "message";
     const dictation = this.deps.dictation;
     const audio = this.deps.audio;
     this.dictationRequested = false;
@@ -645,6 +771,15 @@ export class VoiceAgentSessionController {
     this.quietChunks = 0;
     if (text === "") {
       this.dictationFailed("Nothing was heard in the dictation.");
+      return;
+    }
+    if (this.dictationPurpose === "feedback") {
+      this.dictationPurpose = "message";
+      const id = this.recordFeedback(text, "dictation");
+      this.connection?.sendText(
+        `[T3 update] The user's feedback was saved to the logs as ${id}. Confirm in a few words; do not act on it.`,
+      );
+      this.deliverUpdatesWhenQuiet();
       return;
     }
     const saved = dictation.store.add(text, nowMs());
@@ -825,8 +960,8 @@ export class VoiceAgentSessionController {
         this.update({ agentSpeaking: false });
         return;
       case "audio":
-        // The agent stays silent while the user dictates.
-        if (this.state.dictation !== null) return;
+        // The agent stays silent while the user dictates or a message is read aloud.
+        if (this.state.dictation !== null || this.state.readout?.phase === "reading") return;
         this.turnUnderway = true;
         this.agentReplied();
         this.deps.audio.play(event.data);
@@ -999,6 +1134,7 @@ export class VoiceAgentSessionController {
       }
       this.sendingSpeech = true;
       this.repliedSinceSpeech = false;
+      this.pauseReadoutForUser();
       this.log({ type: "microphone", status: "speech", level: Math.round(level) });
       for (const held of this.preRoll) this.connection?.sendAudio(held);
       this.preRoll = [];
@@ -1043,6 +1179,8 @@ export class VoiceAgentSessionController {
     this.cues.failed();
     this.dropQueuedUpdates();
     void this.abandonDictation();
+    this.readoutRequest = null;
+    this.readout?.stop();
     this.update({
       phase: "error",
       error,

@@ -5,6 +5,9 @@ import {
   createVoiceAgentTools,
   createVoiceAgentWorkspace,
   describeVoiceThreadUpdates,
+  locateInReadout,
+  READ_ALOUD_VOICE,
+  synthesizeSpeech,
   snapshotVoiceThreads,
   VOICE_AGENT_INSTRUCTIONS,
   type VoiceAgentMode,
@@ -132,7 +135,22 @@ function createVoiceAgentHandle(initialProvider: VoiceAgentProviderId): VoiceAge
       language: navigator.language,
       tools: createVoiceAgentTools(workspace, undefined, {
         setListeningMode: (mode) => controller.requestMode(mode),
+        feedback: {
+          request: () => controller.requestDictation("feedback"),
+          flag: (note) => controller.recordFeedback(note, "flag"),
+        },
+        readAloud: {
+          request: (title, sentences, start, end) =>
+            controller.requestReadout(title, sentences, start, end),
+          current: () => controller.currentReadout(),
+          play: (start, end) => controller.playReadout(start, end),
+          locate: async (sentences, description) =>
+            locateInReadout(await readGeminiKey(), sentences, description),
+        },
       }),
+      readAloud: {
+        synthesize: async (text) => synthesizeSpeech(await readGeminiKey(), text, READ_ALOUD_VOICE),
+      },
       // The agent switched mode when asked; it is saved like the user's own choice.
       onModeChange: (mode) => localStorage.setItem(MODE_STORAGE_KEY, mode),
       describeContext: () => {
