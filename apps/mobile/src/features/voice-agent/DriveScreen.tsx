@@ -1,12 +1,21 @@
+import { useFocusEffect } from "@react-navigation/native";
 import { voiceAgentStatus } from "@t3tools/client-runtime/voice-agent";
+import { useCallback } from "react";
 import { Pressable, View, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
+import { setDriveScreenShown } from "./driveScreenShown";
+import { useTalkGesture } from "./useTalkGesture";
 import { useVoiceAgentState } from "./VoiceAgentPanel";
-import { stopVoiceAgent, toggleVoiceAgent, voiceAgentController } from "./voiceAgentSession";
+import {
+  setVoiceAgentMode,
+  startVoiceAgent,
+  stopVoiceAgent,
+  voiceAgentController,
+} from "./voiceAgentSession";
 
 const BUTTON_MAX = 320;
 /** Enough of what was heard to see dictation is working, without reading while driving. */
@@ -23,32 +32,47 @@ export function DriveScreen() {
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
   const size = Math.min(BUTTON_MAX, width * 0.7, height * 0.4);
+  // The floating voice panel would repeat this screen, so it hides while this is shown.
+  useFocusEffect(
+    useCallback(() => {
+      setDriveScreenShown(true);
+      return () => setDriveScreenShown(false);
+    }, []),
+  );
   const active = state.phase === "live" || state.phase === "connecting";
   const dictation = state.dictation;
   const holdToTalk = state.mode === "push-to-talk" && state.phase === "live" && dictation === null;
+  const talk = useTalkGesture(state.talking);
 
   const label =
     dictation?.phase === "recording"
       ? "Finish dictation"
       : dictation?.phase === "transcribing"
         ? "Transcribing…"
-        : state.phase === "error"
-          ? "Tap to try again"
-          : !active
-            ? "Tap to talk"
+        : !active
+          ? "Start voice"
+          : state.phase === "connecting"
+            ? voiceAgentStatus(state)
             : holdToTalk
               ? state.talking
-                ? "Listening…"
-                : "Hold to talk"
-              : voiceAgentStatus(state);
+                ? talk.locked
+                  ? "Listening · tap to send"
+                  : "Listening · release to send"
+                : "Hold or tap to talk"
+              : state.muted
+                ? "Muted · tap to unmute"
+                : "Mic open · tap to mute";
   const lit =
-    dictation !== null || state.talking || (active && !holdToTalk && state.phase === "live");
+    dictation !== null || state.talking || (state.phase === "live" && !holdToTalk && !state.muted);
+  // During a session the big button never ends it: that is the small ✕ above.
   const onPress =
     dictation?.phase === "recording"
       ? () => voiceAgentController.finishDictation()
-      : dictation !== null || holdToTalk
-        ? undefined
-        : toggleVoiceAgent;
+      : !active
+        ? startVoiceAgent
+        : state.phase === "live" && dictation === null && !holdToTalk
+          ? () => voiceAgentController.setMuted(!state.muted)
+          : undefined;
   const heard = dictation?.heard.trim() ?? "";
 
   return (
@@ -58,15 +82,7 @@ export function DriveScreen() {
     >
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={
-          dictation !== null
-            ? label
-            : holdToTalk
-              ? "Hold to talk"
-              : active
-                ? "End voice"
-                : "Start voice"
-        }
+        accessibilityLabel={label}
         accessibilityState={{ selected: active, disabled: dictation?.phase === "transcribing" }}
         className={cn(
           "items-center justify-center gap-3 rounded-full active:opacity-80",
@@ -74,11 +90,11 @@ export function DriveScreen() {
         )}
         style={{ width: size, height: size }}
         onPress={onPress}
-        onPressIn={holdToTalk ? () => voiceAgentController.beginTalking() : undefined}
-        onPressOut={holdToTalk ? () => voiceAgentController.endTalking() : undefined}
+        onPressIn={holdToTalk ? talk.onPressIn : undefined}
+        onPressOut={holdToTalk ? talk.onPressOut : undefined}
       >
         <SymbolView
-          name={dictation !== null || (active && !holdToTalk) ? "stop.fill" : "mic"}
+          name={dictation !== null ? "stop.fill" : "mic"}
           size={size * 0.28}
           tintColorClassName={lit ? "accent-primary-foreground" : "accent-icon"}
           type="monochrome"
@@ -106,31 +122,75 @@ export function DriveScreen() {
           {state.error}
         </Text>
       ) : null}
-      {state.phase === "live" && dictation === null && voiceAgentController.canDictate() ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityHint="Records until you press Finish or say stop dictation"
-          className="h-16 min-w-56 flex-row items-center justify-center gap-2 rounded-full bg-subtle px-8 active:opacity-70"
-          onPress={() => voiceAgentController.startDictation()}
-        >
-          <SymbolView
-            name="text.alignleft"
-            size={20}
-            tintColorClassName="accent-icon"
-            type="monochrome"
-          />
-          <Text className="text-lg font-t3-medium text-foreground">Dictate</Text>
-        </Pressable>
+      {state.phase === "live" && dictation === null ? (
+        <View className="flex-row gap-3">
+          {voiceAgentController.canDictate() ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityHint="Records until you press Finish or say stop dictation"
+              className="h-14 flex-row items-center justify-center gap-2 rounded-full bg-subtle px-6 active:opacity-70"
+              onPress={() => voiceAgentController.startDictation()}
+            >
+              <SymbolView
+                name="text.alignleft"
+                size={18}
+                tintColorClassName="accent-icon"
+                type="monochrome"
+              />
+              <Text className="text-lg font-t3-medium text-foreground">Dictate</Text>
+            </Pressable>
+          ) : null}
+          <Pressable
+            accessibilityRole="switch"
+            accessibilityState={{ checked: state.mode === "hands-free" }}
+            className={cn(
+              "h-14 items-center justify-center rounded-full px-6 active:opacity-70",
+              state.mode === "hands-free" ? "bg-primary" : "bg-subtle",
+            )}
+            onPress={() =>
+              setVoiceAgentMode(state.mode === "hands-free" ? "push-to-talk" : "hands-free")
+            }
+          >
+            <Text
+              className={cn(
+                "text-lg font-t3-medium",
+                state.mode === "hands-free" ? "text-primary-foreground" : "text-foreground",
+              )}
+            >
+              Hands-free
+            </Text>
+          </Pressable>
+        </View>
       ) : null}
-      {holdToTalk ? (
-        <Pressable
-          accessibilityRole="button"
-          className="h-14 min-w-40 items-center justify-center rounded-full bg-subtle px-8 active:opacity-70"
-          onPress={stopVoiceAgent}
-        >
-          <Text className="text-lg font-t3-medium text-foreground">End</Text>
-        </Pressable>
-      ) : null}
+      <View
+        className="absolute flex-row items-center justify-between px-5"
+        style={{ top: insets.top + 8, left: 0, right: 0 }}
+      >
+        {active ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="End voice session"
+            className="size-9 items-center justify-center rounded-full border border-border active:opacity-70"
+            onPress={stopVoiceAgent}
+          >
+            <SymbolView
+              name="xmark"
+              size={13}
+              tintColorClassName="accent-icon-muted"
+              type="monochrome"
+            />
+          </Pressable>
+        ) : (
+          <View />
+        )}
+        <Text className="text-sm text-foreground-muted">
+          {state.phase === "live"
+            ? "● Connected"
+            : state.phase === "connecting"
+              ? "Connecting…"
+              : "Voice is off"}
+        </Text>
+      </View>
     </View>
   );
 }

@@ -8,6 +8,7 @@ import { FullWindowOverlay } from "react-native-screens";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
+import { useDriveScreenShown } from "./driveScreenShown";
 import {
   setVoiceAgentMode,
   startVoiceAgent,
@@ -35,7 +36,8 @@ export function useVoiceAgentState(): VoiceAgentState {
  */
 export function VoiceAgentPanel() {
   const state = useVoiceAgentState();
-  if (state.phase === "idle") return null;
+  const driveScreenShown = useDriveScreenShown();
+  if (state.phase === "idle" || driveScreenShown) return null;
   const panel = <VoiceAgentPanelContent state={state} />;
   return Platform.OS === "ios" ? <FullWindowOverlay>{panel}</FullWindowOverlay> : panel;
 }

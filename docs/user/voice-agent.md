@@ -33,8 +33,10 @@ thread list.
 ## Talk to it
 
 Press the button to start a session and press it again to end it. On iPhone,
-the **Drive** tab in the bottom bar turns the screen into one large button for
-a phone in a car mount.
+the **Drive** tab in the bottom bar is made for a phone in a car mount: one
+large button starts voice, then becomes the talk button. Hold it while you
+speak, or tap it to talk hands-off and tap again to send; in hands-free mode it
+mutes the microphone. A small ✕ at the top ends the session.
 
 - **Push to talk**: hold **Hold to talk** while you speak. Pressing it also
   cuts the agent off if it is speaking.
