@@ -67,10 +67,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
       Unmanaged<PacketTunnelProvider>.fromOpaque(ctx).takeUnretainedValue()
         .handleState(state, detail: detail.map { String(cString: $0) })
     }
-    let onNetwork: occore_network_fn = { ctx, address, mtu, _, _, _ in
+    let onNetwork: occore_network_fn = { ctx, address, gatewayAddress, mtu, _, _, _ in
       guard let ctx, let address else { return }
       Unmanaged<PacketTunnelProvider>.fromOpaque(ctx).takeUnretainedValue()
-        .applyNetwork(address: String(cString: address), mtu: Int(mtu))
+        .applyNetwork(
+          address: String(cString: address),
+          gatewayAddress: gatewayAddress.map { String(cString: $0) } ?? "",
+          mtu: Int(mtu))
     }
 
     lock.lock()
@@ -119,8 +122,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
   // MARK: - Network settings
 
   /// Called by occore when the gateway assigns the tunnel's address, again after a reconnect.
-  private func applyNetwork(address: String, mtu: Int) {
-    let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: gatewayHost)
+  private func applyNetwork(address: String, gatewayAddress: String, mtu: Int) {
+    // iOS takes only a numeric address here, not the gateway's hostname.
+    let settings = NEPacketTunnelNetworkSettings(
+      tunnelRemoteAddress: gatewayAddress.isEmpty ? gatewayHost : gatewayAddress)
     let ipv4 = NEIPv4Settings(addresses: [address], subnetMasks: ["255.255.255.255"])
     // Only the T3 server goes through the gateway; everything else stays on the phone's network.
     ipv4.includedRoutes = [NEIPv4Route(destinationAddress: targetHost, subnetMask: "255.255.255.255")]
@@ -129,7 +134,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
     let done = DispatchSemaphore(value: 0)
     setTunnelNetworkSettings(settings) { [weak self] error in
-      if let error { self?.appendLog("Could not apply network settings: \(error.localizedDescription)") }
+      if let error, let self {
+        // Without settings nothing is routed, so connected would be a lie.
+        self.appendLog("Could not apply network settings: \(error.localizedDescription)")
+        self.cancelTunnelWithError(error)
+      }
       done.signal()
     }
     // occore marks the tunnel connected when this returns, so wait for iOS to take the settings.

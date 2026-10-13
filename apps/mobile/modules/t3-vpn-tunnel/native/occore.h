@@ -49,9 +49,12 @@ typedef struct {
 /* Binds the local port and starts the tunnel in the background. Returns 0 or -errno. */
 int occore_start(const occore_config *config, occore **out);
 
-/* The tunnel's address, MTU and up to three DNS servers (empty strings when absent). */
-typedef void (*occore_network_fn)(void *ctx, const char *address, int mtu, const char *dns1,
-				  const char *dns2, const char *dns3);
+/*
+ * The tunnel's address, the gateway's numeric address, the MTU and up to three DNS servers
+ * (empty strings when absent).
+ */
+typedef void (*occore_network_fn)(void *ctx, const char *address, const char *gateway_address,
+				  int mtu, const char *dns1, const char *dns2, const char *dns3);
 
 /*
  * Packet mode, for an iOS packet tunnel extension: no lwIP and no local forward, so
