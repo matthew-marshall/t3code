@@ -83,7 +83,7 @@ describe("reading a message aloud", () => {
       },
     );
     readout.play();
-    await vi.advanceTimersByTimeAsync(1_600);
+    await vi.advanceTimersByTimeAsync(3_100);
     expect(played).toEqual(["One. Two."]);
     await vi.advanceTimersByTimeAsync(5_000);
     expect(played).toEqual(["One. Two.", "Three."]);
