@@ -63,7 +63,13 @@ public final class T3VpnTunnelModule: Module {
     Function("getState") { () -> [String: Any] in
       self.lock.lock()
       defer { self.lock.unlock() }
-      return ["state": self.state, "localPort": self.core.map { Int(occore_local_port($0)) } as Any]
+      return [
+        "state": self.state,
+        "localPort": self.core.map { Int(occore_local_port($0)) } as Any,
+        // What the gateway said about sign-ins once connected; 0 before.
+        "sessionLifetime": self.core.map { Int(occore_session_lifetime($0)) } ?? 0,
+        "lifetimeNotifyPrior": self.core.map { Int(occore_lifetime_notify_prior($0)) } ?? 0,
+      ]
     }
 
     // iOS reclaims a suspended app's listening sockets, so the local forward goes dead after the

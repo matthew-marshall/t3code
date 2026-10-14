@@ -138,6 +138,7 @@ import {
 } from "./features/settings/components/SettingsLegalDocumentRouteScreen";
 import { useAppShortcuts } from "./features/shortcuts/useAppShortcuts";
 import { VoiceAgentHost } from "./features/voice-agent/VoiceAgentHost";
+import { VpnSignInWatcher } from "./features/vpn-tunnel/VpnSignInWatcher";
 import { useIncomingShare } from "./features/sharing/IncomingShareProvider";
 import {
   EMPTY_INCOMING_SHARE_PRESENTATION_STATE,
@@ -679,6 +680,7 @@ function RootStackLayout(props: {
     <HardwareKeyboardCommandProvider pathname={pathname}>
       <ThreadOutboxDrainWorker />
       <VoiceAgentHost pathname={workspaceLocation.pathname} />
+      <VpnSignInWatcher />
       <ShowcaseCaptureCoordinator pathname={pathname} />
       <ExistingThreadSettingsRouteProvider>
         <AndroidWorkspaceTabsProvider>

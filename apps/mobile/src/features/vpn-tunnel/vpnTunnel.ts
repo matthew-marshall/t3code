@@ -34,6 +34,8 @@ export interface VpnTunnelConfig {
    * the phone sleeps, while TLS fails loudly and reconnects at once, and T3 does not need the speed.
    */
   readonly useEsp?: boolean;
+  /** When the cookie was obtained, shown on the VPN page. */
+  readonly signedInAt?: number;
 }
 
 export async function loadVpnTunnelConfig(): Promise<VpnTunnelConfig | null> {
@@ -134,8 +136,25 @@ export function retryTunnelConnections(): void {
   for (const listener of reachableListeners) listener();
 }
 
+const signInExpiredListeners = new Set<() => void>();
+
+/** Called when the gateway refuses the saved sign-in, from either tunnel. */
+export function onSignInExpired(listener: () => void): () => void {
+  signInExpiredListeners.add(listener);
+  return () => signInExpiredListeners.delete(listener);
+}
+
+const signInExpired = () => {
+  for (const listener of signInExpiredListeners) listener();
+};
+
+/** How either tunnel words a refused sign-in. */
+export const isSignInExpiredError = (message: string) =>
+  message.includes("rejected the cookie") || message.includes("sign-in expired");
+
 nativeVpnTunnel?.addListener("onState", (event) => {
   if (event.state === "connected") retryTunnelConnections();
+  if (event.state === "stopped" && isSignInExpiredError(event.detail ?? "")) signInExpired();
 });
 if (nativeVpnTunnel?.systemVpnAvailable) {
   nativeVpnTunnel.addListener("onSystemState", (event) => {
@@ -200,6 +219,10 @@ export function ensureSystemVpn(config: VpnTunnelConfig): Promise<void> {
             useEsp: config.useEsp === true,
           }),
     )
+    .catch((error: unknown) => {
+      if (error instanceof Error && isSignInExpiredError(error.message)) signInExpired();
+      throw error;
+    })
     .finally(() => {
       pendingSystemStart = null;
     });

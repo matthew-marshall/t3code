@@ -80,6 +80,13 @@ uint16_t occore_local_port(const occore *core);
  */
 int occore_reopen_listener(occore *core);
 
+/*
+ * How long the gateway lets a sign-in last, in seconds, and how many seconds before the end it
+ * asks clients to warn the user; 0 until the gateway has said, which it does on connecting.
+ */
+int occore_session_lifetime(const occore *core);
+int occore_lifetime_notify_prior(const occore *core);
+
 /* Cancels the tunnel, closes forwarded connections, and frees the core. */
 void occore_stop(occore *core);
 

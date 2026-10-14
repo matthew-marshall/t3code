@@ -22,6 +22,12 @@ import {
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
 import { useEnvironments } from "../../state/environments";
 import { useWorkstationProbe } from "../vpn-tunnel/useWorkstationProbe";
+import {
+  loadSignInExpiry,
+  type SignInExpiry,
+  type SignInStatus,
+  signInStatus,
+} from "../vpn-tunnel/vpnSignIn";
 import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -30,6 +36,27 @@ import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 const systemVpnAvailable = nativeVpnTunnel?.systemVpnAvailable === true;
 
 const MAX_LOG_LINES = 300;
+
+const clock = (at: number) =>
+  new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
+function signInLine(signedInAt: number | undefined, status: SignInStatus, now: number): string {
+  const hours = signedInAt === undefined ? null : (now - signedInAt) / 3_600_000;
+  const signedIn =
+    hours === null
+      ? "Signed in"
+      : `Signed in ${hours < 1 ? `${Math.max(1, Math.round(hours * 60))} min` : `${Math.round(hours)} h`} ago`;
+  switch (status.kind) {
+    case "expired":
+      return `Sign-in expired at ${clock(status.expiresAt)}; sign in again`;
+    case "expiring":
+      return `${signedIn} · expires at ${clock(status.expiresAt)}; sign in again soon`;
+    case "valid":
+      return `${signedIn} · expires at ${clock(status.expiresAt)}`;
+    case "unknown":
+      return `${signedIn} · expiry known after the tunnel connects`;
+  }
+}
 
 /**
  * Configures the GlobalProtect tunnel. Environments whose host and port match the target connect
@@ -76,6 +103,16 @@ export function SettingsVpnTunnelRouteScreen() {
 
   const usingSystemVpn = systemVpnAvailable && saved?.background === true;
   const probe = useWorkstationProbe(saved);
+  const [expiry, setExpiry] = useState<SignInExpiry | null>(null);
+  // The sign-in line is as of when the screen was opened.
+  const [openedAt, setOpenedAt] = useState(0);
+  useFocusEffect(
+    useCallback(() => {
+      setOpenedAt(Date.now());
+      void loadSignInExpiry().then(setExpiry);
+    }, []),
+  );
+  const signInState = saved === null ? null : signInStatus(saved, expiry, openedAt);
   const { environments } = useEnvironments();
   // The environments whose address is the workstation, so they connect through this tunnel.
   const tunnelEnvironments =
@@ -128,6 +165,12 @@ export function SettingsVpnTunnelRouteScreen() {
       ...(portal.trim() ? { portal: portal.trim() } : {}),
       gateway: parsed?.gateway ?? saved?.gateway ?? "",
       cookie: parsed?.cookie ?? saved?.cookie ?? "",
+      // A pasted cookie is a new sign-in; otherwise the old one's time stands.
+      ...(parsed !== null
+        ? { signedInAt: Date.now() }
+        : saved?.signedInAt !== undefined
+          ? { signedInAt: saved.signedInAt }
+          : {}),
       targetHost: targetHost.trim(),
       targetPort: port,
       os: os.trim() || "linux",
@@ -189,6 +232,17 @@ export function SettingsVpnTunnelRouteScreen() {
                   ? "Not signed in"
                   : `${saved.targetHost}:${saved.targetPort} via ${saved.gateway}`}
             </Text>
+            {saved !== null && saved.cookie !== "" && signInState !== null ? (
+              <Text
+                className={
+                  signInState.kind === "expired" || signInState.kind === "expiring"
+                    ? "text-sm text-danger-foreground"
+                    : "text-sm text-foreground-muted"
+                }
+              >
+                {signInLine(saved.signedInAt, signInState, openedAt)}
+              </Text>
+            ) : null}
             {saved !== null ? (
               <Text className="text-sm text-foreground-muted">
                 {`Workstation: ${
