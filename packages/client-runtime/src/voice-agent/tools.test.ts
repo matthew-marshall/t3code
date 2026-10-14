@@ -23,6 +23,7 @@ const thread = (
     snoozedUntil: null,
     hasPendingApprovals: false,
     hasPendingUserInput: false,
+    runtimeMode: "approval-required",
     archivedAt: null,
     updatedAt: "2026-10-11T11:00:00.000Z",
     ...overrides,
@@ -68,6 +69,7 @@ function setup(projection: Partial<OrchestrationV2ThreadProjection> = {}) {
     sendMessage: vi.fn(async () => {}),
     stopTurn: vi.fn(async () => {}),
     setSettled: vi.fn(async () => {}),
+    setAccess: vi.fn(async () => {}),
     respondToApproval: vi.fn(async () => {}),
     answerQuestion: vi.fn(async () => {}),
     openThread: vi.fn(),
@@ -280,6 +282,26 @@ describe("voice agent tools", () => {
       "t-approval",
       "t-settled",
     ]);
+  });
+
+  it("changes a thread's access by the app's names for it", async () => {
+    const { workspace, call } = setup();
+    await expect(
+      call("set_thread_access", { threadId: "t-idle", access: "full-access" }),
+    ).resolves.toBe("Set to Full access.");
+    expect(workspace.setAccess).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "t-idle" }),
+      "full-access",
+    );
+    await expect(
+      call("set_thread_access", { threadId: "t-idle", access: "approval-required" }),
+    ).resolves.toBe("It already has Supervised.");
+    await expect(
+      call("set_thread_access", { threadId: "t-approval", access: "full-access" }),
+    ).resolves.toContain("pending approval request still needs an answer");
+    await expect(call("set_thread_access", { threadId: "t-idle", access: "yolo" })).rejects.toThrow(
+      'Unknown access "yolo".',
+    );
   });
 
   it("settles and reopens threads", async () => {

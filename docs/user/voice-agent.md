@@ -108,8 +108,10 @@ file that outlasts the session logs.
 
 - Before it approves or denies a request, starts a thread, or stops one, the
   agent says what it is about to do and waits for you to say yes.
-- Threads the voice agent starts run in **Approval required** mode, on the
-  project's default model. Like the new-task screen, they start in a new
+- Threads the voice agent starts get the same permissions and model as threads
+  you start in the app (Default permissions under New threads in Settings,
+  usually **Full access**). Ask it to change a thread's permissions, for
+  example "let that thread run without asking". Like the new-task screen, they start in a new
   worktree or in the project checkout according to the project's setting, and
   you can ask for the other or for a new worktree off a branch you name. Before
   it starts one, the agent reads back the project, the task and where it runs,
