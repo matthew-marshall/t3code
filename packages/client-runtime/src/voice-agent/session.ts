@@ -83,7 +83,7 @@ export type VoiceAgentLogEvent =
       readonly onDevice?: string;
     }
   | { readonly type: "dictation-error"; readonly message: string }
-  | ({ readonly type: "feedback" } & VoiceFeedback)
+  | ({ readonly type: "feedback" } & Omit<VoiceFeedback, "at">)
   | { readonly type: "readout"; readonly title: string; readonly sentences: number }
   /** The provider rejected one request; the session went on. */
   | { readonly type: "provider-error"; readonly message: string }
@@ -678,7 +678,8 @@ export class VoiceAgentSessionController {
    */
   recordFeedback(text: string, source: "dictation" | "flag"): string {
     const feedback = { id: `f${this.nextFeedbackId++}`, text, source, at: nowMs() };
-    this.log({ type: "feedback", ...feedback });
+    // The log entry has its own timestamp.
+    this.log({ type: "feedback", id: feedback.id, text, source });
     try {
       this.deps.onFeedback?.(feedback);
     } catch {

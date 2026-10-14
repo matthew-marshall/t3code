@@ -105,6 +105,7 @@ function createVoiceAgentHandle(initialProvider: VoiceAgentProviderId): VoiceAge
     interruptTurn: threadEnvironment.interruptTurn,
     settle: threadEnvironment.settle,
     unsettle: threadEnvironment.unsettle,
+    setRuntimeMode: threadEnvironment.setRuntimeMode,
     respondToApproval: threadEnvironment.respondToApproval,
     respondToUserInput: threadEnvironment.respondToUserInput,
     serverConfig: (environmentId) =>

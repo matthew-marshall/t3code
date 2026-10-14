@@ -19,6 +19,7 @@ import type { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import type {
   InterruptThreadTurnInput,
   SettleThreadInput,
+  SetThreadRuntimeModeInput,
   UnsettleThreadInput,
   RespondToThreadApprovalInput,
   RespondToThreadUserInputInput,
@@ -48,6 +49,11 @@ export interface VoiceAgentWorkspaceSources {
   readonly startTurn: AtomCommand<EnvironmentInput<StartThreadTurnInput>, unknown, unknown>;
   readonly interruptTurn: AtomCommand<EnvironmentInput<InterruptThreadTurnInput>, unknown, unknown>;
   readonly settle: AtomCommand<EnvironmentInput<SettleThreadInput>, unknown, unknown>;
+  readonly setRuntimeMode: AtomCommand<
+    EnvironmentInput<SetThreadRuntimeModeInput>,
+    unknown,
+    unknown
+  >;
   readonly unsettle: AtomCommand<EnvironmentInput<UnsettleThreadInput>, unknown, unknown>;
   readonly respondToApproval: AtomCommand<
     EnvironmentInput<RespondToThreadApprovalInput>,
@@ -79,12 +85,6 @@ const describeFailure = (result: AtomCommandResult<unknown, unknown>, fallback: 
   const error = squashAtomCommandFailure(result);
   return error instanceof Error && error.message.trim().length > 0 ? error.message : fallback;
 };
-
-/**
- * Threads voice starts run with approval required, whatever the project's
- * default: the agent should not act on a misheard request unchecked.
- */
-const VOICE_RUNTIME_MODE = "approval-required" as const;
 
 /** Enough for the agent to match a spoken branch name against. */
 const BRANCH_LIMIT = 100;
@@ -222,6 +222,8 @@ export function createVoiceAgentWorkspace(
       baseBranch: mode === "worktree" ? (baseBranch ?? (await currentBranch(project))) : null,
       startFromOrigin: resolved.settings.newWorktreesStartFromOrigin,
       modelSelection: modelForProject(project, resolved.settings.defaultModelSelection),
+      // The same access a thread started in the app gets.
+      runtimeMode: resolved.settings.defaultRuntimeMode,
     };
   };
 
@@ -265,14 +267,14 @@ export function createVoiceAgentWorkspace(
           },
           modelSelection,
           titleSeed: title,
-          runtimeMode: VOICE_RUNTIME_MODE,
+          runtimeMode: plan.runtimeMode,
           interactionMode: "default",
           bootstrap: {
             createThread: {
               projectId: project.id,
               title,
               modelSelection,
-              runtimeMode: VOICE_RUNTIME_MODE,
+              runtimeMode: plan.runtimeMode,
               interactionMode: "default",
               branch: plan.baseBranch,
               worktreePath: null,
@@ -339,6 +341,13 @@ export function createVoiceAgentWorkspace(
             { threadId: thread.id, reason: "user" },
             "Could not reopen the thread.",
           ),
+    setAccess: (thread, runtimeMode) =>
+      run(
+        sources.setRuntimeMode,
+        thread.environmentId,
+        { threadId: thread.id, runtimeMode },
+        "Could not change the thread's access.",
+      ),
     respondToApproval: (thread, requestId, decision) =>
       run(
         sources.respondToApproval,

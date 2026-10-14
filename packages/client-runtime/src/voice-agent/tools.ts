@@ -4,6 +4,7 @@ import type {
   OrchestrationV2ThreadProjection,
   ProviderApprovalDecision,
   ProviderUserInputAnswers,
+  RuntimeMode,
   RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -53,6 +54,8 @@ export interface VoiceAgentWorkspace {
   readonly stopTurn: (thread: EnvironmentThreadShell) => Promise<void>;
   /** Settles a thread (moves it out of the active list), or reopens a settled one. */
   readonly setSettled: (thread: EnvironmentThreadShell, settled: boolean) => Promise<void>;
+  /** What the thread's agent may do without asking, like the access picker in the app. */
+  readonly setAccess: (thread: EnvironmentThreadShell, runtimeMode: RuntimeMode) => Promise<void>;
   readonly respondToApproval: (
     thread: EnvironmentThreadShell,
     requestId: RuntimeRequestId,
@@ -78,7 +81,19 @@ export interface VoiceNewThreadPlan {
   readonly baseBranch: string | null;
   readonly startFromOrigin: boolean;
   readonly modelSelection: ModelSelection;
+  readonly runtimeMode: RuntimeMode;
 }
+
+/** The access picker's names in the app, which the user knows. */
+const ACCESS_LABELS: Record<RuntimeMode, string> = {
+  "approval-required": "Supervised",
+  "auto-accept-edits": "Auto-accept edits",
+  auto: "Auto",
+  "full-access": "Full access",
+};
+
+const isRuntimeMode = (value: unknown): value is RuntimeMode =>
+  typeof value === "string" && Object.hasOwn(ACCESS_LABELS, value);
 
 const describeWorkspace = (plan: VoiceNewThreadPlan) =>
   plan.mode === "worktree"
@@ -94,6 +109,7 @@ export const VOICE_AGENT_INSTRUCTIONS = `You are the voice interface for T3 Code
 - To follow up on existing work, find the thread with list_threads, then use send_message. Use read_thread to tell the user what an agent said or what it is asking.
 - Threads that need approval or have a question come first in list_threads. read_thread gives the request IDs.
 - A thread's status "done" means it finished and the user has not looked at it yet (the green Done check in the app). "Settled" threads are finished work moved out of the active list; list_threads leaves them out unless asked for, or when searching. settle_thread and reopen_thread move threads between the two.
+- New threads get the app's default access, usually Full access. If the user wants a thread to stop asking for approval, or to ask first, use set_thread_access.
 - Before approving or denying a request, stopping a thread, or starting one, say in a few words what you are about to do and wait for the user to say yes. Never approve on your own judgment.
 - If a request is ambiguous, ask one short clarifying question instead of guessing.
 - When the user wants to dictate or say something long, call start_dictation, say only "Go ahead" or similar, and then stay silent. The transcript arrives as a "[T3 dictation dN]" message: unless it is clear what it is for, ask. To send it or start a thread with it, pass its dictationId instead of retyping it; read the summary back as usual before starting a thread.
@@ -390,6 +406,7 @@ export function createVoiceAgentTools(
         return JSON.stringify({
           title: thread.title,
           status: threadStatus(thread),
+          access: ACCESS_LABELS[thread.runtimeMode],
           messages: projection.messages
             .filter((message) => message.role !== "system" && message.text.trim().length > 0)
             .slice(-MESSAGE_LIMIT)
@@ -438,6 +455,7 @@ export function createVoiceAgentTools(
         return JSON.stringify({
           runsIn: describeWorkspace(plan),
           model: plan.modelSelection.model,
+          access: ACCESS_LABELS[plan.runtimeMode],
         });
       },
     },
@@ -657,6 +675,37 @@ export function createVoiceAgentTools(
         if (!isSettled(thread)) return "That thread is not settled.";
         await workspace.setSettled(thread, false);
         return "Reopened.";
+      },
+    },
+    {
+      declaration: {
+        name: "set_thread_access",
+        description:
+          "Sets what a thread's agent may do without asking, like the access picker in the app: Full access approves everything, Supervised asks before commands and file changes. Takes effect on the agent's next turn.",
+        parametersJsonSchema: {
+          type: "object",
+          properties: {
+            threadId: threadIdSchema,
+            access: {
+              type: "string",
+              enum: Object.keys(ACCESS_LABELS),
+              description:
+                "full-access: approve everything. auto-accept-edits: approve file changes, ask about the rest. auto: the provider approves routine actions. approval-required: Supervised, ask first.",
+            },
+          },
+          required: ["threadId", "access"],
+        },
+      },
+      run: async (args) => {
+        const thread = findThread(args);
+        const access = args.access;
+        if (!isRuntimeMode(access)) throw new Error(`Unknown access "${String(access)}".`);
+        if (thread.runtimeMode === access) return `It already has ${ACCESS_LABELS[access]}.`;
+        await workspace.setAccess(thread, access);
+        // Access applies to what the agent does next, not to a request it already made.
+        return thread.hasPendingApprovals
+          ? `Set to ${ACCESS_LABELS[access]}. Its pending approval request still needs an answer: offer to read it with read_thread.`
+          : `Set to ${ACCESS_LABELS[access]}.`;
       },
     },
     {

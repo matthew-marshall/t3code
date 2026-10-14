@@ -28,6 +28,7 @@ function setup(options: {
   readonly envMode?: "local" | "worktree";
   readonly projectFile?: T3ProjectFile | null;
   readonly branch?: string | null;
+  readonly runtimeMode?: "approval-required" | "full-access";
 }) {
   const sent: Array<StartThreadTurnInput> = [];
   const startTurn = {
@@ -41,6 +42,7 @@ function setup(options: {
   const settings = {
     ...DEFAULT_SERVER_SETTINGS,
     ...(options.envMode ? { defaultThreadEnvMode: options.envMode } : {}),
+    ...(options.runtimeMode ? { defaultRuntimeMode: options.runtimeMode } : {}),
   };
   let ids = 0;
   const workspace = createVoiceAgentWorkspace({
@@ -52,6 +54,7 @@ function setup(options: {
     interruptTurn: unused,
     settle: unused,
     unsettle: unused,
+    setRuntimeMode: unused,
     respondToApproval: unused,
     respondToUserInput: unused,
     serverConfig: () => ({ settings }) as unknown as ServerConfig,
@@ -97,13 +100,22 @@ describe("createVoiceAgentWorkspace", () => {
     const { plan } = await workspace.startThread(project, "Add dark mode", {});
 
     expect(plan).toMatchObject({ mode: "worktree", baseBranch: "main" });
-    expect(sent[0]!.runtimeMode).toBe("approval-required");
+    expect(sent[0]!.runtimeMode).toBe("full-access");
     expect(sent[0]!.bootstrap).toMatchObject({
       createThread: { projectId: "project-1", branch: "main", worktreePath: null },
       prepareWorktree: { projectCwd: "/repo", baseBranch: "main" },
       runSetupScript: true,
     });
     expect(sent[0]!.bootstrap!.prepareWorktree!.branch).toMatch(/^t3\/[0-9a-f]{8}$/);
+  });
+
+  it("gives a thread the access the app's settings give new threads", async () => {
+    const { workspace, sent } = setup({ runtimeMode: "approval-required" });
+    const { plan } = await workspace.startThread(project, "Add dark mode", {});
+
+    expect(plan.runtimeMode).toBe("approval-required");
+    expect(sent[0]!.runtimeMode).toBe("approval-required");
+    expect(sent[0]!.bootstrap!.createThread!.runtimeMode).toBe("approval-required");
   });
 
   it("lets the user's choice override the project default either way", async () => {
