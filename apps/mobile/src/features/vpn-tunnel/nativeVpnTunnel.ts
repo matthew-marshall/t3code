@@ -23,7 +23,14 @@ export interface VpnTunnelStartOptions {
 interface NativeVpnTunnelModule {
   start(options: VpnTunnelStartOptions): Promise<{ readonly localPort: number }>;
   stop(): Promise<void>;
-  getState(): { readonly state: VpnTunnelState; readonly localPort?: number };
+  getState(): {
+    readonly state: VpnTunnelState;
+    readonly localPort?: number;
+    /** Seconds a sign-in lasts, as the gateway said on connecting; 0 before, or in older builds. */
+    readonly sessionLifetime?: number;
+    /** Seconds before the end the gateway asks for a warning; 0 when it did not say. */
+    readonly lifetimeNotifyPrior?: number;
+  };
   /**
    * Replaces the local forward's listening socket, which iOS reclaims while the app is
    * suspended. Missing from builds that predate it.

@@ -63,7 +63,12 @@ export function SettingsVpnTunnelLoginRouteScreen() {
           }),
       });
       if (cancelled) return;
-      await saveVpnTunnelConfig({ ...config, gateway: result.gateway, cookie: result.cookie });
+      await saveVpnTunnelConfig({
+        ...config,
+        gateway: result.gateway,
+        cookie: result.cookie,
+        signedInAt: Date.now(),
+      });
       navigation.goBack();
     };
     run().catch((cause: unknown) => {

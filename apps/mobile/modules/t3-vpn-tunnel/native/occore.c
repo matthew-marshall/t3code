@@ -198,7 +198,9 @@ static void oc_setup_tun(void *privdata)
 			}
 			core->tun_attached = 1;
 		}
-		logf_(core, PRG_INFO, "Tunnel address %s, MTU %d", ip->addr, mtu);
+		logf_(core, PRG_INFO, "Tunnel address %s, MTU %d; sign-in lifetime %d s, warn %d s before",
+		      ip->addr, mtu, openconnect_get_gp_session_lifetime(core->vpninfo),
+		      openconnect_get_gp_lifetime_notify_prior(core->vpninfo));
 		core->on_network(core->cfg.ctx, ip->addr, ip->gateway_addr ? ip->gateway_addr : "", mtu,
 				 ip->dns[0] ? ip->dns[0] : "",
 				 ip->dns[1] ? ip->dns[1] : "", ip->dns[2] ? ip->dns[2] : "");
@@ -223,7 +225,9 @@ static void oc_setup_tun(void *privdata)
 		}
 		core->tun_attached = 1;
 	}
-	logf_(core, PRG_INFO, "Tunnel address %s, MTU %d", ip->addr, core->net.mtu);
+	logf_(core, PRG_INFO, "Tunnel address %s, MTU %d; sign-in lifetime %d s, warn %d s before",
+	      ip->addr, core->net.mtu, openconnect_get_gp_session_lifetime(core->vpninfo),
+	      openconnect_get_gp_lifetime_notify_prior(core->vpninfo));
 	wake(core);
 }
 
@@ -858,6 +862,16 @@ int occore_start_packets(const occore_config *config, occore_network_fn on_netwo
 	if (!on_network || !packet_fd)
 		return -EINVAL;
 	return start(config, on_network, out, packet_fd);
+}
+
+int occore_session_lifetime(const occore *core)
+{
+	return openconnect_get_gp_session_lifetime(core->vpninfo);
+}
+
+int occore_lifetime_notify_prior(const occore *core)
+{
+	return openconnect_get_gp_lifetime_notify_prior(core->vpninfo);
 }
 
 uint16_t occore_local_port(const occore *core)
