@@ -13,12 +13,12 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
+import { ListRowLayout } from "../../components/ListRowLayout";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { geminiKey, openAIKey, useKeySaved } from "../voice-agent/apiKeys";
 import { voiceSessionLogs } from "../voice-agent/voiceSessionLog";
 import { SettingsActionRow } from "./components/SettingsActionRow";
-import { SettingsControlRow } from "./components/SettingsControlRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 
@@ -212,61 +212,73 @@ export function SettingsVoiceAgentRouteScreen() {
           value={enabled}
           onValueChange={(value) => savePreferences({ voiceAgentEnabled: value })}
         />
-        <SettingsControlRow icon="server.rack" label="Provider">
-          <ControlPillMenu
-            actions={(["gemini", "openai"] as const).map((candidate) => ({
-              id: candidate,
-              title: PROVIDERS[candidate].label,
-              state: providerId === candidate ? ("on" as const) : ("off" as const),
-            }))}
-            onPressAction={({ nativeEvent }) => {
-              const next = nativeEvent.event;
-              if (next === "gemini" || next === "openai") {
-                savePreferences({ voiceAgentProvider: next });
-              }
-            }}
-          >
-            <MenuValue label="Provider" value={provider.label} disabled={!ready} />
-          </ControlPillMenu>
-        </SettingsControlRow>
+        <ListRowLayout
+          icon="server.rack"
+          label="Provider"
+          accessory={
+            <ControlPillMenu
+              actions={(["gemini", "openai"] as const).map((candidate) => ({
+                id: candidate,
+                title: PROVIDERS[candidate].label,
+                state: providerId === candidate ? ("on" as const) : ("off" as const),
+              }))}
+              onPressAction={({ nativeEvent }) => {
+                const next = nativeEvent.event;
+                if (next === "gemini" || next === "openai") {
+                  savePreferences({ voiceAgentProvider: next });
+                }
+              }}
+            >
+              <MenuValue label="Provider" value={provider.label} disabled={!ready} />
+            </ControlPillMenu>
+          }
+        />
       </SettingsSection>
       <ApiKeySection provider={provider} />
       {enabled ? <SessionLogSection /> : null}
       {enabled ? (
         <SettingsSection title="Voice">
-          <SettingsControlRow icon="speaker.wave.2" label="Voice">
-            <ControlPillMenu
-              actions={[
-                { id: "", title: "Default", state: voice === "" ? "on" : "off" },
-                ...provider.voices.map((candidate) => ({
-                  id: candidate.name,
-                  title: candidate.name,
-                  subtitle: candidate.style,
-                  state: voice === candidate.name ? ("on" as const) : ("off" as const),
-                })),
-              ]}
-              onPressAction={({ nativeEvent }) => saveVoice(nativeEvent.event)}
-            >
-              <MenuValue label="Voice" value={voiceLabel(provider, voice)} disabled={!ready} />
-            </ControlPillMenu>
-          </SettingsControlRow>
-          <SettingsControlRow icon="speedometer" label="Speaking pace">
-            <ControlPillMenu
-              actions={(["slow", "normal", "fast"] as const).map((candidate) => ({
-                id: candidate,
-                title: PACE_LABELS[candidate],
-                state: pace === candidate ? ("on" as const) : ("off" as const),
-              }))}
-              onPressAction={({ nativeEvent }) => {
-                const next = nativeEvent.event;
-                if (next === "slow" || next === "normal" || next === "fast") {
-                  savePreferences({ voiceAgentPace: next });
-                }
-              }}
-            >
-              <MenuValue label="Speaking pace" value={PACE_LABELS[pace]} disabled={!ready} />
-            </ControlPillMenu>
-          </SettingsControlRow>
+          <ListRowLayout
+            icon="speaker.wave.2"
+            label="Voice"
+            accessory={
+              <ControlPillMenu
+                actions={[
+                  { id: "", title: "Default", state: voice === "" ? "on" : "off" },
+                  ...provider.voices.map((candidate) => ({
+                    id: candidate.name,
+                    title: candidate.name,
+                    subtitle: candidate.style,
+                    state: voice === candidate.name ? ("on" as const) : ("off" as const),
+                  })),
+                ]}
+                onPressAction={({ nativeEvent }) => saveVoice(nativeEvent.event)}
+              >
+                <MenuValue label="Voice" value={voiceLabel(provider, voice)} disabled={!ready} />
+              </ControlPillMenu>
+            }
+          />
+          <ListRowLayout
+            icon="speedometer"
+            label="Speaking pace"
+            accessory={
+              <ControlPillMenu
+                actions={(["slow", "normal", "fast"] as const).map((candidate) => ({
+                  id: candidate,
+                  title: PACE_LABELS[candidate],
+                  state: pace === candidate ? ("on" as const) : ("off" as const),
+                }))}
+                onPressAction={({ nativeEvent }) => {
+                  const next = nativeEvent.event;
+                  if (next === "slow" || next === "normal" || next === "fast") {
+                    savePreferences({ voiceAgentPace: next });
+                  }
+                }}
+              >
+                <MenuValue label="Speaking pace" value={PACE_LABELS[pace]} disabled={!ready} />
+              </ControlPillMenu>
+            }
+          />
           <SettingsSwitchRow
             icon="speaker.wave.2"
             label="Sound cues"
@@ -275,28 +287,32 @@ export function SettingsVoiceAgentRouteScreen() {
             value={preferences?.voiceAgentSoundCues !== false}
             onValueChange={(value) => savePreferences({ voiceAgentSoundCues: value })}
           />
-          <SettingsControlRow icon="text.alignleft" label="Dictation">
-            <ControlPillMenu
-              actions={(["gemini-batch", "on-device"] as const).map((candidate) => ({
-                id: candidate,
-                title: DICTATION_MODE_LABELS[candidate],
-                subtitle: DICTATION_MODE_SUBTITLES[candidate],
-                state: dictationMode === candidate ? ("on" as const) : ("off" as const),
-              }))}
-              onPressAction={({ nativeEvent }) => {
-                const next = nativeEvent.event;
-                if (next === "gemini-batch" || next === "on-device") {
-                  savePreferences({ voiceAgentDictationMode: next });
-                }
-              }}
-            >
-              <MenuValue
-                label="Dictation"
-                value={DICTATION_MODE_LABELS[dictationMode]}
-                disabled={!ready}
-              />
-            </ControlPillMenu>
-          </SettingsControlRow>
+          <ListRowLayout
+            icon="text.alignleft"
+            label="Dictation"
+            accessory={
+              <ControlPillMenu
+                actions={(["gemini-batch", "on-device"] as const).map((candidate) => ({
+                  id: candidate,
+                  title: DICTATION_MODE_LABELS[candidate],
+                  subtitle: DICTATION_MODE_SUBTITLES[candidate],
+                  state: dictationMode === candidate ? ("on" as const) : ("off" as const),
+                }))}
+                onPressAction={({ nativeEvent }) => {
+                  const next = nativeEvent.event;
+                  if (next === "gemini-batch" || next === "on-device") {
+                    savePreferences({ voiceAgentDictationMode: next });
+                  }
+                }}
+              >
+                <MenuValue
+                  label="Dictation"
+                  value={DICTATION_MODE_LABELS[dictationMode]}
+                  disabled={!ready}
+                />
+              </ControlPillMenu>
+            }
+          />
         </SettingsSection>
       ) : null}
       <Text className="px-2 text-sm text-foreground-muted">
