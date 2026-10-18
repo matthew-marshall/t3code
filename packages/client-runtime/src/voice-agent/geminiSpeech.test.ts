@@ -44,6 +44,24 @@ describe("read-aloud Gemini calls", () => {
     ).resolves.toMatchObject({ found: false });
   });
 
+  it("gives up on a request that hangs, so the read-aloud tools answer", async () => {
+    vi.useFakeTimers();
+    try {
+      const hangs = vi.fn(
+        (_url: string, init: RequestInit) =>
+          new Promise<Response>((_, reject) =>
+            init.signal?.addEventListener("abort", () => reject(new Error("aborted"))),
+          ),
+      ) as unknown as typeof fetch;
+      const located = locateInReadout("key", ["One."], "option 2", hangs);
+      const failed = expect(located).rejects.toThrow("Gemini took too long to answer.");
+      await vi.advanceTimersByTimeAsync(20_000);
+      await failed;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps only the samples of a WAV response, so its header is not played as noise", () => {
     const samples = [1, 2, 3, 4, 5, 6];
     const header = [

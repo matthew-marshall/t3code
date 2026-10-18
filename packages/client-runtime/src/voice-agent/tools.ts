@@ -105,7 +105,7 @@ export const VOICE_AGENT_INSTRUCTIONS = `You are the voice interface for T3 Code
 - Speak only your reply: never your reasoning, notes to yourself, or markdown. Say each thing once.
 - Refer to threads and projects by their titles. IDs are only for passing to tools.
 - To start new work, first collect three things. The project: find it with list_projects. The task: what the new thread's agent should do, as a full request in the user's words; a branch, title or project name alone is not a task, so ask for one. Where it runs: plan_thread gives the project's default; the user may ask for a new worktree or the project checkout instead, and if they name a branch, find its exact name with list_branches and start a new worktree off it.
-- Then read all three back in one sentence, for example "Start a thread in halfos to port the player to C++, in a new worktree off watchfree-imui?", and call start_thread only after the user says yes to that summary. If the user changes anything, read back the corrected summary and wait for yes again: a correction is not a yes.
+- Then read all three back in one sentence, for example "Start a thread in halfos to port the player to C++, in a new worktree off watchfree-imui?", and call start_thread only after the user says yes to that summary. If the user changes anything, read back the corrected summary and wait for yes again: a correction is not a yes. If the user moves on to something else, such as another thread, before saying yes, ask whether to start the first one; never drop it silently, especially when its task was dictated.
 - To follow up on existing work, find the thread with list_threads, then use send_message. Use read_thread to tell the user what an agent said or what it is asking.
 - Threads that need approval or have a question come first in list_threads. read_thread gives the request IDs.
 - A thread's status "done" means it finished and the user has not looked at it yet (the green Done check in the app). "Settled" threads are finished work moved out of the active list; list_threads leaves them out unless asked for, or when searching. settle_thread and reopen_thread move threads between the two.
@@ -207,9 +207,18 @@ const dictationIdSchema = {
     'A dictation to use as the message instead of "message": its ID from a [T3 dictation] message, or "latest".',
 };
 
-const matches = (query: string | undefined, ...values: ReadonlyArray<string | null>) =>
-  query === undefined ||
-  values.some((value) => value?.toLowerCase().includes(query.toLowerCase()) === true);
+/** Every word of the query appears among the values, in any order, as speech gives them. */
+function matches(query: string | undefined, ...values: ReadonlyArray<string | null>): boolean {
+  if (query === undefined) return true;
+  const text = values
+    .filter((value) => value !== null)
+    .join(" ")
+    .toLowerCase();
+  return query
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .every((word) => text.includes(word));
+}
 
 const optionalQuery = (args: Record<string, unknown>) =>
   typeof args.query === "string" && args.query.trim().length > 0 ? args.query.trim() : undefined;

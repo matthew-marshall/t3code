@@ -42,7 +42,7 @@ export type VoiceAgentLogEvent =
     }
   | {
       readonly type: "connection";
-      readonly status: "open" | "live" | "closed" | "go-away";
+      readonly status: "open" | "live" | "closed" | "go-away" | "unresponsive";
       readonly detail?: string;
     }
   | { readonly type: "heard"; readonly text: string }
@@ -107,7 +107,8 @@ export interface VoiceFeedback {
   readonly at: number;
 }
 
-export type VoiceDictationEnd = "button" | "phrase" | "remote" | "limit";
+/** "session-end": the session ended or failed mid-dictation, and what was said was kept. */
+export type VoiceDictationEnd = "button" | "phrase" | "remote" | "limit" | "session-end";
 
 /** A dictation in progress: recording until the button or "stop dictation", then transcribing. */
 export interface VoiceDictationState {
@@ -259,6 +260,11 @@ const STOP_PHRASE_PAUSE_MS = 750;
 const DICTATION_LIMIT_MS = 30 * 60 * 1000;
 /** An update waits at most this long for a quiet moment, in case a turn never reports done. */
 const UPDATE_MAX_WAIT_MS = 20_000;
+/**
+ * The agent answers within this long of being spoken to. A session that does not has been seen to
+ * stay silent for good after resuming, so it is replaced by a fresh one.
+ */
+const REPLY_TIMEOUT_MS = 15_000;
 
 /**
  * Hands-free sends the microphone only around speech. A chunk at least this loud counts as speech;
@@ -370,6 +376,11 @@ export class VoiceAgentSessionController {
   private readonly cues: VoiceAgentCues;
   /** Whether the agent has answered since the user last started speaking. */
   private repliedSinceSpeech = true;
+  private replyTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Fresh sessions started in a row because the agent stopped answering. */
+  private stalls = 0;
+  /** Whether the current connection got as far as live. */
+  private connectionLive = false;
 
   constructor(deps: VoiceAgentSessionDependencies, mode: VoiceAgentMode) {
     this.deps = deps;
@@ -399,6 +410,7 @@ export class VoiceAgentSessionController {
     }
     this.resumptionHandle = null;
     this.reconnects = 0;
+    this.stalls = 0;
     this.update({ phase: "connecting", error: null, transcript: [] });
     this.log({ type: "session-start", mode: this.state.mode });
     await this.connect();
@@ -408,9 +420,10 @@ export class VoiceAgentSessionController {
     if (this.state.phase !== "idle") this.log({ type: "session-end" });
     this.generation += 1;
     this.closeSocket();
+    this.clearReplyTimer();
     this.resumptionHandle = null;
     this.dropQueuedUpdates();
-    void this.abandonDictation();
+    void this.keepDictation();
     this.cues.reset();
     this.readoutRequest = null;
     this.readout?.stop();
@@ -741,29 +754,15 @@ export class VoiceAgentSessionController {
     this.update({ dictation: { phase: "transcribing", heard } });
     audio.playChime?.("end");
     const mode = dictation.mode();
-    let onDevice = heard;
-    let text = "";
+    let transcript: { readonly text: string; readonly onDevice: string };
     try {
-      onDevice = (await audio.stopPhraseListener?.()) || heard;
-      const recording = await audio.stopRecordingFile?.();
-      text = onDevice;
-      if (mode === "gemini-batch" && recording) {
-        try {
-          text = await dictation.transcribeRecording(recording);
-        } catch (error) {
-          // The on-device transcript is less polished, but it is what the user said.
-          this.log({
-            type: "dictation-error",
-            message: `Gemini could not transcribe the dictation; kept the on-device transcript. ${describeError(error)}`,
-          });
-        }
-      }
+      transcript = await this.transcribeDictation(dictation, mode, heard);
     } catch (error) {
       this.update({ dictation: null });
       this.dictationFailed(describeError(error));
       return;
     }
-    text = stripStopPhrases(text);
+    const { text, onDevice } = transcript;
     const seconds = Math.round((nowMs() - this.dictationStartedAt) / 1000);
     this.update({ dictation: null });
     // Recording resumes on the next chunk; the hands-free gate starts over.
@@ -780,6 +779,7 @@ export class VoiceAgentSessionController {
       this.connection?.sendText(
         `[T3 update] The user's feedback was saved to the logs as ${id}. Confirm in a few words; do not act on it.`,
       );
+      this.expectReply();
       this.deliverUpdatesWhenQuiet();
       return;
     }
@@ -790,7 +790,7 @@ export class VoiceAgentSessionController {
       text,
       endedBy,
       seconds,
-      ...(mode === "gemini-batch" ? { onDevice: stripStopPhrases(onDevice) } : {}),
+      ...(mode === "gemini-batch" ? { onDevice } : {}),
     });
     this.appendTranscript("dictation", text);
     this.connection?.sendText(
@@ -800,17 +800,88 @@ export class VoiceAgentSessionController {
         `Unless it is already clear what to do with it, briefly ask. To send it as a message or start a thread with it, pass dictationId "${saved.id}" instead of retyping it.`,
       ].join("\n"),
     );
+    this.expectReply();
     this.deliverUpdatesWhenQuiet();
+  }
+
+  /**
+   * Stops listening and recording, and returns the transcript without its stop phrase: Gemini's
+   * for "gemini-batch", or the on-device one when that is the mode or Gemini fails.
+   */
+  private async transcribeDictation(
+    dictation: NonNullable<VoiceAgentSessionDependencies["dictation"]>,
+    mode: VoiceDictationMode,
+    heard: string,
+  ): Promise<{ readonly text: string; readonly onDevice: string }> {
+    const audio = this.deps.audio;
+    const onDevice = (await audio.stopPhraseListener?.()) || heard;
+    const recording = await audio.stopRecordingFile?.();
+    let text = onDevice;
+    if (mode === "gemini-batch" && recording) {
+      try {
+        text = await dictation.transcribeRecording(recording);
+      } catch (error) {
+        // The on-device transcript is less polished, but it is what the user said.
+        this.log({
+          type: "dictation-error",
+          message: `Gemini could not transcribe the dictation; kept the on-device transcript. ${describeError(error)}`,
+        });
+      }
+    }
+    return { text: stripStopPhrases(text), onDevice: stripStopPhrases(onDevice) };
+  }
+
+  /**
+   * The session is ending mid-dictation. What was said is still transcribed and saved, so it can
+   * be found in the dictation history, but nothing is sent.
+   */
+  private async keepDictation(): Promise<void> {
+    const dictation = this.deps.dictation;
+    if (this.state.dictation?.phase !== "recording" || !dictation) {
+      await this.abandonDictation();
+      return;
+    }
+    const heard = this.state.dictation.heard;
+    const purpose = this.dictationPurpose;
+    const seconds = Math.round((nowMs() - this.dictationStartedAt) / 1000);
+    this.dictationRequested = false;
+    this.dictationPurpose = "message";
+    this.clearDictationLimit();
+    this.deps.audio.setRemoteControl?.(null);
+    this.update({ dictation: null });
+    const mode = dictation.mode();
+    let text: string;
+    let onDevice: string;
+    try {
+      ({ text, onDevice } = await this.transcribeDictation(dictation, mode, heard));
+    } catch {
+      return;
+    }
+    if (text === "") return;
+    if (purpose === "feedback") {
+      this.recordFeedback(text, "dictation");
+      return;
+    }
+    const saved = dictation.store.add(text, nowMs());
+    this.log({
+      type: "dictation",
+      id: saved.id,
+      text,
+      endedBy: "session-end",
+      seconds,
+      ...(mode === "gemini-batch" ? { onDevice } : {}),
+    });
   }
 
   /** Tells the agent a dictation failed, so it can say so. */
   private dictationFailed(message: string): void {
     this.log({ type: "dictation-error", message });
     this.connection?.sendText(`[T3 update] The dictation failed: ${message}`);
+    this.expectReply();
     this.deliverUpdatesWhenQuiet();
   }
 
-  /** Stops listening and recording without keeping anything, as when the session ends. */
+  /** Stops listening and recording without keeping anything. */
   private async abandonDictation(): Promise<void> {
     this.dictationRequested = false;
     this.clearDictationLimit();
@@ -837,6 +908,7 @@ export class VoiceAgentSessionController {
     this.dropQueuedUpdates();
     if (this.state.phase !== "live" || updates.length === 0) return;
     this.connection?.sendText(updates.map((text) => `[T3 update] ${text}`).join("\n"));
+    this.expectReply();
     for (const text of updates) {
       this.log({ type: "update", text });
       this.appendTranscript("update", text);
@@ -853,6 +925,7 @@ export class VoiceAgentSessionController {
 
   private async connect(): Promise<void> {
     const generation = ++this.generation;
+    this.connectionLive = false;
     this.update({ progress: "token" });
     let connection: VoiceProviderConnection;
     try {
@@ -892,6 +965,8 @@ export class VoiceAgentSessionController {
           this.cues.connectionDropped();
         }
         this.socket = null;
+        // Resuming failed, as when the provider still holds the dropped connection's session.
+        if (!this.connectionLive) this.resumptionHandle = null;
         const active = this.state.phase === "live" || this.state.phase === "connecting";
         if (active && this.reconnects < MAX_RECONNECTS) {
           this.reconnects += 1;
@@ -906,6 +981,7 @@ export class VoiceAgentSessionController {
   private async reconnect(): Promise<void> {
     this.generation += 1;
     this.closeSocket();
+    this.clearReplyTimer();
     this.update({ phase: "connecting", talking: false, agentSpeaking: false, runningTools: [] });
     this.deps.audio.clearPlayback();
     await this.connect();
@@ -974,6 +1050,7 @@ export class VoiceAgentSessionController {
         this.turnUnderway = true;
         // Heard and not yet answered: "working" plays until it is, so silence means unheard.
         if (!this.repliedSinceSpeech) this.cues.awaitReply();
+        this.expectReply();
         this.log({ type: "heard", text: event.text });
         this.appendTranscript("user", event.text);
         return;
@@ -1009,11 +1086,53 @@ export class VoiceAgentSessionController {
 
   private agentReplied(): void {
     this.repliedSinceSpeech = true;
+    this.stalls = 0;
+    this.clearReplyTimer();
     this.cues.replied();
+  }
+
+  /** Something went to the agent that it answers; see `REPLY_TIMEOUT_MS`. */
+  private expectReply(): void {
+    this.clearReplyTimer();
+    this.replyTimer = setTimeout(() => this.replyOverdue(), REPLY_TIMEOUT_MS);
+  }
+
+  private clearReplyTimer(): void {
+    if (this.replyTimer !== null) clearTimeout(this.replyTimer);
+    this.replyTimer = null;
+  }
+
+  private replyOverdue(): void {
+    this.replyTimer = null;
+    if (this.state.phase !== "live") return;
+    // The agent cannot answer yet: the user or the app still has the turn.
+    if (
+      this.sendingSpeech ||
+      this.state.talking ||
+      this.state.dictation !== null ||
+      this.state.runningTools.length > 0 ||
+      this.state.readout?.phase === "reading"
+    ) {
+      this.expectReply();
+      return;
+    }
+    this.log({ type: "connection", status: "unresponsive" });
+    this.stalls += 1;
+    if (this.stalls > 1) {
+      this.fail("The voice agent stopped answering. Try again in a little while.");
+      return;
+    }
+    // The fresh session is told the conversation so far, then prompted to carry on from it.
+    this.resumptionHandle = null;
+    this.queuedUpdates.push(
+      "The voice connection was restarted because you had stopped answering. Answer the user's last request now.",
+    );
+    void this.reconnect();
   }
 
   private sessionReady(): void {
     this.reconnects = 0;
+    this.connectionLive = true;
     this.cues.connectionLive();
     this.log({ type: "connection", status: "live" });
     this.turnUnderway = false;
@@ -1047,6 +1166,7 @@ export class VoiceAgentSessionController {
     const answered = responses.filter((response) => !this.cancelledCalls.delete(response.id));
     if (answered.length > 0) {
       this.connection?.sendToolResults(answered);
+      this.expectReply();
       // The agent answers with what the tools returned.
       this.turnUnderway = true;
     }
@@ -1177,9 +1297,10 @@ export class VoiceAgentSessionController {
 
   private fail(error: string): void {
     this.log({ type: "error", message: error });
+    this.clearReplyTimer();
     this.cues.failed();
     this.dropQueuedUpdates();
-    void this.abandonDictation();
+    void this.keepDictation();
     this.readoutRequest = null;
     this.readout?.stop();
     this.update({

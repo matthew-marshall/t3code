@@ -35,6 +35,10 @@ class FakeSocket implements VoiceAgentSocket {
   close(): void {
     this.closed = true;
   }
+  /** The connection closes from the far end. */
+  drop(reason: string): void {
+    this.handlers.onClose(reason);
+  }
   receive(message: object): void {
     this.handlers.onMessage(new TextEncoder().encode(JSON.stringify(message)).buffer);
   }
@@ -430,6 +434,24 @@ describe("VoiceAgentSessionController", () => {
       vi.useRealTimers();
     });
 
+    it("still transcribes and keeps a dictation when the session ends partway through", async () => {
+      const h = harness();
+      await h.controller.start();
+      await h.connect();
+      h.controller.startDictation();
+      await flush();
+      h.hear("add a retry to the upload");
+
+      await h.controller.stop();
+      await flush();
+
+      expect(h.dictations.get("latest")).toMatchObject({ text: "Add a retry to the upload" });
+      expect(h.events).toContainEqual(
+        expect.objectContaining({ type: "dictation", endedBy: "session-end" }),
+      );
+      expect(h.controller.getState().dictation).toBeNull();
+    });
+
     it("ignores stop dictation said mid-sentence, and finishes on a play/pause press", async () => {
       vi.useFakeTimers();
       try {
@@ -640,6 +662,9 @@ describe("VoiceAgentSessionController", () => {
 
       // A turn that never reports done still lets the update through eventually.
       socket.receive({ serverContent: { inputTranscription: { text: "hmm" } } });
+      socket.receive({
+        serverContent: { modelTurn: { parts: [{ inlineData: { data: second } }] } },
+      });
       h.controller.sendUpdate("Docs finished.");
       expect(updates()).toHaveLength(1);
       vi.advanceTimersByTime(20_000);
@@ -681,6 +706,59 @@ describe("VoiceAgentSessionController", () => {
     second.receive({ setupComplete: {} });
     expect(h.controller.getState().phase).toBe("live");
     expect(h.audio.startCapture).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts fresh when a resumed session will not take the connection", async () => {
+    const h = harness();
+    await h.controller.start();
+    const first = await h.connect();
+    first.receive({ sessionResumptionUpdate: { resumable: true, newHandle: "handle-1" } });
+
+    first.drop("Socket is not connected");
+    await flush();
+    const second = h.sockets[1]!;
+    second.open();
+    expect(second.sentOf("setup")[0]!.setup.sessionResumption).toEqual({ handle: "handle-1" });
+    second.drop("BidiGenerateContent session is already connected to an existing client");
+    await flush();
+
+    const third = h.sockets[2]!;
+    third.open();
+    expect(third.sentOf("setup")[0]!.setup.sessionResumption).toEqual({});
+    third.receive({ setupComplete: {} });
+    expect(h.controller.getState().phase).toBe("live");
+  });
+
+  it("replaces a session that stops answering with a fresh one that carries on", async () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness();
+      await h.controller.start();
+      const first = await h.connect();
+      first.receive({ sessionResumptionUpdate: { resumable: true, newHandle: "handle-1" } });
+      first.receive({ serverContent: { inputTranscription: { text: "Are you there?" } } });
+
+      vi.advanceTimersByTime(15_000);
+      await flush();
+      expect(first.closed).toBe(true);
+      const second = h.sockets[1]!;
+      second.open();
+      const { setup } = second.sentOf("setup")[0]!;
+      expect(setup.sessionResumption).toEqual({});
+      expect(setup.systemInstruction.parts[0].text).toContain("User: Are you there?");
+      second.receive({ setupComplete: {} });
+      await flush();
+      expect(second.sentOf("realtimeInput").at(-1)!.realtimeInput.text).toContain(
+        "Answer the user's last request now.",
+      );
+
+      // Silent again: the session ends rather than looping.
+      vi.advanceTimersByTime(15_000);
+      expect(h.controller.getState().phase).toBe("error");
+      expect(h.sockets).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("switches modes on a fresh session that is told the conversation so far", async () => {

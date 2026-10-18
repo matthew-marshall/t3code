@@ -282,6 +282,11 @@ describe("voice agent tools", () => {
       "t-approval",
       "t-settled",
     ]);
+    // Words in any order, as the user says them.
+    const reordered = JSON.parse(await call("list_threads", { query: "login, old" }));
+    expect(reordered.threads.map((entry: { threadId: string }) => entry.threadId)).toEqual([
+      "t-settled",
+    ]);
   });
 
   it("changes a thread's access by the app's names for it", async () => {

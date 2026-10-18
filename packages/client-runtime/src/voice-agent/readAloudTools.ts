@@ -40,6 +40,14 @@ const partSchema = {
     'A part to read instead of all of it, described as the user put it: "the last paragraph", "the data table", "the conclusion".',
 };
 
+const SENTENCE_MARKS: Record<SpeakableSentence["kind"], string> = {
+  text: "",
+  heading: "[heading] ",
+  list: "[list item] ",
+  table: "[table] ",
+  code: "",
+};
+
 const positiveInt = (value: unknown, fallback: number) =>
   typeof value === "number" && Number.isInteger(value) && value > 0 ? value : fallback;
 
@@ -47,9 +55,10 @@ export function createReadAloudTools(
   readAloud: VoiceAgentReadAloudTools,
   sources: ReadAloudSources,
 ): ReadonlyArray<VoiceAgentTool> {
+  // Headings and list items are marked, so the locator can tell where a section ends.
   const locate = async (sentences: ReadonlyArray<SpeakableSentence>, part: string) =>
     readAloud.locate(
-      sentences.map((sentence) => sentence.text),
+      sentences.map((sentence) => `${SENTENCE_MARKS[sentence.kind]}${sentence.text}`),
       part,
     );
 

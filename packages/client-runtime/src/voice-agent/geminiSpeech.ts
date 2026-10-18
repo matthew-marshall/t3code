@@ -1,3 +1,4 @@
+// @effect-diagnostics globalTimers:off - Requests run in the client, outside an Effect runtime.
 import { GEMINI_API_ORIGIN, MISSING_GEMINI_KEY_MESSAGE } from "./gemini.ts";
 
 /** Gemini text-to-speech for reading messages aloud: 16-bit mono PCM at 24 kHz. */
@@ -12,6 +13,9 @@ const failure = (status: number) =>
     ? "Gemini rejected the API key. Check it in Settings → Voice agent."
     : `Gemini could not do that (${status}).`;
 
+/** A request can hang on a poor connection; past this it fails instead. */
+const REQUEST_TIMEOUT_MS = 20_000;
+
 async function generate(
   apiKey: string | null,
   model: string,
@@ -20,18 +24,29 @@ async function generate(
 ): Promise<unknown> {
   const key = apiKey?.trim() ?? "";
   if (key === "") throw new Error(MISSING_GEMINI_KEY_MESSAGE);
-  let response: Response;
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), REQUEST_TIMEOUT_MS);
   try {
-    response = await fetchImpl(`${GEMINI_API_ORIGIN}/v1beta/models/${model}:generateContent`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-goog-api-key": key },
-      body: JSON.stringify(body),
-    });
-  } catch {
-    throw new Error("Could not reach Gemini. Check your connection.");
+    let response: Response;
+    try {
+      response = await fetchImpl(`${GEMINI_API_ORIGIN}/v1beta/models/${model}:generateContent`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-goog-api-key": key },
+        body: JSON.stringify(body),
+        signal: abort.signal,
+      });
+    } catch {
+      throw new Error(
+        abort.signal.aborted
+          ? "Gemini took too long to answer."
+          : "Could not reach Gemini. Check your connection.",
+      );
+    }
+    if (!response.ok) throw new Error(failure(response.status));
+    return await response.json().catch(() => null);
+  } finally {
+    clearTimeout(timer);
   }
-  if (!response.ok) throw new Error(failure(response.status));
-  return response.json().catch(() => null);
 }
 
 type Part = { readonly text?: string; readonly inlineData?: { readonly data?: string } };
@@ -117,7 +132,7 @@ export async function locateInReadout(
       systemInstruction: {
         parts: [
           {
-            text: "You find parts of a message for someone listening to it read aloud. Given its numbered sentences and a description of a part, answer with the first and last sentence numbers of that part, inclusive. If no part matches, set found to false and say briefly why.",
+            text: 'You find parts of a message for someone listening to it read aloud. Given its numbered sentences and a description of a part, answer with the first and last sentence numbers of that part, inclusive. A part named like a heading ("the options", "option 2") is the whole section: from its heading or label through everything before the next heading or label at the same level. "From X to the end" ends at the last sentence. If no part matches, set found to false and say briefly why.',
           },
         ],
       },
