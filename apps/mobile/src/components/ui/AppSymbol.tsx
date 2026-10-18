@@ -280,6 +280,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "textformat.size": IconTypography,
   "textformat.size.larger": IconTextIncrease,
   "textformat.size.smaller": IconTextDecrease,
+  "square.and.arrow.up": IconUpload,
   "tray.and.arrow.up": IconUpload,
   trash: IconTrash,
   wifi: IconWifi,

@@ -1,6 +1,8 @@
 import type { VoiceAgentLogEvent, VoiceFeedback } from "@t3tools/client-runtime/voice-agent";
 import { Directory, File, Paths } from "expo-file-system";
 
+import { type DictationRecord, dictationsInLog, parseVoiceLog } from "./voiceSessionHistory";
+
 const DIRECTORY = "voice-logs";
 const KEEP = 20;
 
@@ -51,10 +53,18 @@ export function logVoiceEvent(event: VoiceAgentLogEvent | VoiceControlEvent): vo
     const starts =
       (event.type === "control" && event.action === "start requested") ||
       (event.type === "session-start" && current === null);
-    if (starts || current === null) current = startFile();
-    current.write(`${JSON.stringify({ at: new Date().toISOString(), ...event })}\n`, {
-      append: true,
-    });
+    if (starts) current = startFile();
+    // A dictation kept as the session ended belongs in that session's log.
+    const file =
+      current ??
+      (event.type === "dictation" ? voiceSessionLogs()[0] : undefined) ??
+      (current = startFile());
+    const at = new Date().toISOString();
+    file.write(`${JSON.stringify({ at, ...event })}\n`, { append: true });
+    if (event.type === "dictation") {
+      const { id, text, seconds } = event;
+      appendDictation({ at, id, text, seconds, sessionLog: file.name });
+    }
     if (event.type === "session-end") current = null;
   } catch {
     // Logging must never break voice.
@@ -80,4 +90,88 @@ export function appendFeedback(feedback: VoiceFeedback): void {
   } catch {
     // Feedback is also in the session log.
   }
+}
+
+/** A session log's contents, or null once it has been rotated out. */
+export async function readVoiceSessionLog(name: string): Promise<string | null> {
+  try {
+    const file = new File(logDirectory(), name);
+    return file.exists ? await file.text() : null;
+  } catch {
+    return null;
+  }
+}
+
+const DICTATIONS_FILE = "dictations.jsonl";
+
+function dictationsFile(): File {
+  return new File(Paths.document, DICTATIONS_FILE);
+}
+
+function writeDictations(file: File, dictations: ReadonlyArray<DictationRecord>): void {
+  file.write(dictations.map((dictation) => `${JSON.stringify(dictation)}\n`).join(""));
+}
+
+/**
+ * Starts the history from the dictations in the session logs still kept, so dictations from
+ * before it existed are not lost.
+ */
+async function seedDictations(file: File): Promise<void> {
+  const seeded: Array<DictationRecord> = [];
+  const logs = voiceSessionLogs();
+  // Oldest first, as the history is written.
+  for (let index = logs.length - 1; index >= 0; index -= 1) {
+    const log = logs[index]!;
+    try {
+      seeded.push(...dictationsInLog(parseVoiceLog(await log.text()), log.name));
+    } catch {
+      // An unreadable log has nothing to recover.
+    }
+  }
+  if (!file.exists) file.create();
+  writeDictations(file, seeded);
+}
+
+/**
+ * Keeps every dictation in Documents/dictations.jsonl, which is not rotated out like the
+ * session logs, so a dictation the agent never used can still be copied.
+ */
+function appendDictation(dictation: DictationRecord): void {
+  try {
+    const file = dictationsFile();
+    // Before the history exists, the seed reads this dictation from its session log.
+    if (!file.exists) return;
+    file.write(`${JSON.stringify(dictation)}\n`, { append: true });
+  } catch {
+    // The dictation is also in the session log.
+  }
+}
+
+/** The history oldest first, as it is written. */
+async function readDictations(): Promise<ReadonlyArray<DictationRecord>> {
+  const file = dictationsFile();
+  if (!file.exists) await seedDictations(file);
+  return (await file.text()).split("\n").flatMap((line) => {
+    try {
+      const value = JSON.parse(line) as DictationRecord;
+      return typeof value.text === "string" && typeof value.at === "string" ? [value] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
+/** Every dictation, newest first. */
+export async function dictationHistory(): Promise<ReadonlyArray<DictationRecord>> {
+  const dictations = await readDictations();
+  const newestFirst: Array<DictationRecord> = [];
+  for (let index = dictations.length - 1; index >= 0; index -= 1) {
+    newestFirst.push(dictations[index]!);
+  }
+  return newestFirst;
+}
+
+export async function deleteDictation(at: string): Promise<void> {
+  const kept = (await readDictations()).filter((dictation) => dictation.at !== at);
+  writeDictations(dictationsFile(), kept);
 }

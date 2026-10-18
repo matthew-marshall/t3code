@@ -124,6 +124,11 @@ import { SettingsLegalRouteScreen } from "./features/settings/SettingsLegalRoute
 import { SettingsMicrophoneRouteScreen } from "./features/settings/SettingsMicrophoneRouteScreen";
 import { SettingsVoiceAgentRouteScreen } from "./features/settings/SettingsVoiceAgentRouteScreen";
 import {
+  SettingsVoiceDictationsRouteScreen,
+  SettingsVoiceSessionRouteScreen,
+  SettingsVoiceSessionsRouteScreen,
+} from "./features/settings/SettingsVoiceHistoryRouteScreens";
+import {
   SettingsOpenSourceLicenseRouteScreen,
   SettingsOpenSourceLicensesRouteScreen,
 } from "./features/settings/SettingsOpenSourceLicensesRouteScreen";
@@ -343,6 +348,21 @@ const SettingsContentStack = createV5SheetStackNavigator({
       options: {
         title: "Voice Agent",
       },
+    }),
+    SettingsVoiceDictations: createNativeStackScreen({
+      screen: SettingsVoiceDictationsRouteScreen,
+      linking: "voice-agent/dictations",
+      options: { title: "Dictations" },
+    }),
+    SettingsVoiceSessions: createNativeStackScreen({
+      screen: SettingsVoiceSessionsRouteScreen,
+      linking: "voice-agent/sessions",
+      options: { title: "Voice Sessions" },
+    }),
+    SettingsVoiceSession: createNativeStackScreen({
+      screen: SettingsVoiceSessionRouteScreen,
+      linking: "voice-agent/sessions/:name",
+      options: { title: "Session" },
     }),
     SettingsFollowUp: createNativeStackScreen({
       screen: SettingsFollowUpRouteScreen,

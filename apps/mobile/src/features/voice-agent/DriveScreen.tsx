@@ -1,4 +1,4 @@
-import { useFocusEffect } from "@react-navigation/native";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { voiceAgentStatus } from "@t3tools/client-runtime/voice-agent";
 import { useCallback } from "react";
 import { Pressable, View, useWindowDimensions } from "react-native";
@@ -29,6 +29,7 @@ const HEARD_CHARS = 160;
  */
 export function DriveScreen() {
   const state = useVoiceAgentState();
+  const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
   const size = Math.min(BUTTON_MAX, width * 0.7, height * 0.4);
@@ -212,13 +213,33 @@ export function DriveScreen() {
         ) : (
           <View />
         )}
-        <Text className="text-sm text-foreground-muted">
-          {state.phase === "live"
-            ? "● Connected"
-            : state.phase === "connecting"
-              ? "Connecting…"
-              : "Voice is off"}
-        </Text>
+        <View className="flex-row items-center gap-3">
+          <Text className="text-sm text-foreground-muted">
+            {state.phase === "live"
+              ? "● Connected"
+              : state.phase === "connecting"
+                ? "Connecting…"
+                : "Voice is off"}
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Dictations and sessions"
+            className="size-9 items-center justify-center rounded-full border border-border active:opacity-70"
+            onPress={() =>
+              navigation.navigate("SettingsSheet", {
+                screen: "SettingsContent",
+                params: { screen: "SettingsVoiceDictations" },
+              })
+            }
+          >
+            <SymbolView
+              name="clock"
+              size={15}
+              tintColorClassName="accent-icon-muted"
+              type="monochrome"
+            />
+          </Pressable>
+        </View>
       </View>
     </View>
   );

@@ -1,4 +1,5 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useNavigation } from "@react-navigation/native";
 import {
   VOICE_AGENT_OPENAI_VOICES,
   VOICE_AGENT_VOICES,
@@ -7,7 +8,6 @@ import {
 } from "@t3tools/contracts";
 import type { VoiceDictationMode } from "@t3tools/client-runtime/voice-agent";
 import { AsyncResult } from "effect/reactivity";
-import { shareAsync } from "expo-sharing";
 import { Alert, Linking, Pressable, ScrollView } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -17,8 +17,8 @@ import { ListRowLayout } from "../../components/ListRowLayout";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { geminiKey, openAIKey, useKeySaved } from "../voice-agent/apiKeys";
-import { voiceSessionLogs } from "../voice-agent/voiceSessionLog";
 import { SettingsActionRow } from "./components/SettingsActionRow";
+import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 
@@ -152,25 +152,31 @@ function ApiKeySection(props: { readonly provider: ProviderSettings }) {
   );
 }
 
-/** Shares the newest voice session log: what the agent heard, said, called and got back. */
-function SessionLogSection() {
-  const share = () => {
-    const latest = voiceSessionLogs()[0];
-    if (latest === undefined) {
-      Alert.alert("No voice sessions yet", "Logs are kept for the last 20 voice sessions.");
-      return;
-    }
-    void shareAsync(latest.uri, { mimeType: "application/json", UTI: "public.plain-text" }).catch(
-      (error: unknown) =>
-        Alert.alert(
-          "Could not share the log",
-          error instanceof Error ? error.message : "Sharing failed.",
-        ),
-    );
-  };
+/** Past dictations and sessions: to copy a dictation, or see what the agent heard and did. */
+function HistorySection() {
+  const navigation = useNavigation();
   return (
-    <SettingsSection title="Session logs">
-      <SettingsActionRow icon="doc.text" label="Share latest session log" onPress={share} />
+    <SettingsSection title="History">
+      <SettingsRow
+        icon="text.alignleft"
+        label="Dictations"
+        onPress={() =>
+          navigation.navigate("SettingsSheet", {
+            screen: "SettingsContent",
+            params: { screen: "SettingsVoiceDictations" },
+          })
+        }
+      />
+      <SettingsRow
+        icon="bubble.left.and.bubble.right"
+        label="Sessions and tool calls"
+        onPress={() =>
+          navigation.navigate("SettingsSheet", {
+            screen: "SettingsContent",
+            params: { screen: "SettingsVoiceSessions" },
+          })
+        }
+      />
     </SettingsSection>
   );
 }
@@ -235,7 +241,7 @@ export function SettingsVoiceAgentRouteScreen() {
         />
       </SettingsSection>
       <ApiKeySection provider={provider} />
-      {enabled ? <SessionLogSection /> : null}
+      <HistorySection />
       {enabled ? (
         <SettingsSection title="Voice">
           <ListRowLayout

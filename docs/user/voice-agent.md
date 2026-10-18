@@ -83,6 +83,12 @@ Either way, Apple's on-device speech listens for the stop phrase. "End
 dictation" works too, but "end" is easily misheard as "and". The first use may
 download Apple's speech model.
 
+Every dictation is kept on the iPhone, including one cut short by the session
+ending, so nothing you dictated is lost if the agent never used it. Open it
+from the clock button on the **Drive** tab or **Settings → Voice Agent →
+Dictations** to read or copy it. **Sessions and tool calls** shows each recent
+session's conversation, tool calls and connection problems.
+
 ## Read aloud
 
 To hear a message itself rather than the agent's summary, ask it to "read
