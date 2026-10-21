@@ -49,7 +49,13 @@ export type VoiceAgentLogEvent =
   | { readonly type: "said"; readonly text: string }
   | { readonly type: "interrupted" }
   /** Hands-free: the microphone started sending at `level` dBFS, or paused after quiet. */
-  | { readonly type: "microphone"; readonly status: "speech"; readonly level: number }
+  | {
+      readonly type: "microphone";
+      readonly status: "speech";
+      readonly level: number;
+      /** How likely the opening sound was someone talking, where the platform can tell. */
+      readonly speech?: number;
+    }
   | { readonly type: "microphone"; readonly status: "paused" }
   | { readonly type: "turn-complete" }
   | {
@@ -85,6 +91,9 @@ export type VoiceAgentLogEvent =
   | { readonly type: "dictation-error"; readonly message: string }
   | ({ readonly type: "feedback" } & Omit<VoiceFeedback, "at">)
   | { readonly type: "readout"; readonly title: string; readonly sentences: number }
+  /** Hands-free: a sound paused reading, or reading went on because no speech followed. */
+  | { readonly type: "readout-paused"; readonly by: "sound" }
+  | { readonly type: "readout-resumed"; readonly by: "no-speech" }
   /** The provider rejected one request; the session went on. */
   | { readonly type: "provider-error"; readonly message: string }
   | { readonly type: "error"; readonly message: string }
@@ -157,11 +166,12 @@ export interface VoiceAgentSocketHandlers {
 export interface VoiceAgentAudio {
   /**
    * `onChunk` gets 100 ms of audio at `sampleRate` and its loudness in dBFS, measured after the
-   * platform's echo cancellation. `onError` reports a microphone lost after capture started; the
-   * session ends with it.
+   * platform's echo cancellation, and where the platform can tell, how likely it is someone
+   * talking (0 to 1). `onError` reports a microphone lost after capture started; the session ends
+   * with it.
    */
   startCapture(
-    onChunk: (base64Pcm: string, levelDbfs: number) => void,
+    onChunk: (base64Pcm: string, levelDbfs: number, speechProbability?: number) => void,
     onError: (message: string) => void,
     sampleRate: number,
   ): Promise<void>;
@@ -265,10 +275,23 @@ const UPDATE_MAX_WAIT_MS = 20_000;
  * stay silent for good after resuming, so it is replaced by a fresh one.
  */
 const REPLY_TIMEOUT_MS = 15_000;
+/**
+ * Hands-free, any sound loud enough pauses a read-aloud at once. If nothing is transcribed by this
+ * long after the sound stops, it was noise, and reading carries on.
+ */
+const RESUME_READOUT_AFTER_MS = 2500;
 
 /**
- * Hands-free sends the microphone only around speech. A chunk at least this loud counts as speech;
- * quieter is background left after the platform's noise suppression.
+ * Hands-free sends the microphone only around speech. Where the platform detects speech (a small
+ * neural model on iOS), a chunk this likely to be someone talking opens the microphone, and once
+ * open, one above the lower bar keeps it open, so a breath mid-sentence does not count as quiet.
+ * Road noise, bumps and music stay out however loud they are.
+ */
+const SPEECH_PROBABILITY_OPEN = 0.5;
+const SPEECH_PROBABILITY_HOLD = 0.35;
+/**
+ * Without speech detection, a chunk at least this loud counts as speech; quieter is background
+ * left after the platform's noise suppression.
  */
 const SPEECH_DBFS = -42;
 /** Sent ahead of the chunk that crossed the threshold, so the start of a word is not clipped. */
@@ -381,6 +404,9 @@ export class VoiceAgentSessionController {
   private stalls = 0;
   /** Whether the current connection got as far as live. */
   private connectionLive = false;
+  /** A sound paused the read-aloud, and no speech has been transcribed since. */
+  private readoutPausedBySound = false;
+  private resumeReadoutTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(deps: VoiceAgentSessionDependencies, mode: VoiceAgentMode) {
     this.deps = deps;
@@ -421,6 +447,8 @@ export class VoiceAgentSessionController {
     this.generation += 1;
     this.closeSocket();
     this.clearReplyTimer();
+    this.clearResumeReadout();
+    this.readoutPausedBySound = false;
     this.resumptionHandle = null;
     this.dropQueuedUpdates();
     void this.keepDictation();
@@ -635,6 +663,35 @@ export class VoiceAgentSessionController {
   /** The user started talking: reading pauses where it is, and the agent listens. */
   private pauseReadoutForUser(): void {
     if (this.state.readout?.phase === "reading") this.readout?.pause();
+  }
+
+  /** Hands-free: a sound might be the user starting to talk, so reading pauses at once. */
+  private pauseReadoutForSound(): void {
+    this.clearResumeReadout();
+    if (this.state.readout?.phase !== "reading") return;
+    this.readout?.pause();
+    this.readoutPausedBySound = true;
+    this.log({ type: "readout-paused", by: "sound" });
+  }
+
+  /** The sound stopped; reading resumes unless it turns out to have been speech. */
+  private resumeReadoutUnlessHeard(): void {
+    if (!this.readoutPausedBySound) return;
+    this.clearResumeReadout();
+    this.resumeReadoutTimer = setTimeout(() => {
+      this.resumeReadoutTimer = null;
+      if (!this.readoutPausedBySound || this.sendingSpeech) return;
+      this.readoutPausedBySound = false;
+      const readout = this.readout?.getState();
+      if (readout?.phase !== "paused") return;
+      this.log({ type: "readout-resumed", by: "no-speech" });
+      this.playReadout(readout.index, readout.end);
+    }, RESUME_READOUT_AFTER_MS);
+  }
+
+  private clearResumeReadout(): void {
+    if (this.resumeReadoutTimer !== null) clearTimeout(this.resumeReadoutTimer);
+    this.resumeReadoutTimer = null;
   }
 
   /**
@@ -1051,6 +1108,11 @@ export class VoiceAgentSessionController {
         // Heard and not yet answered: "working" plays until it is, so silence means unheard.
         if (!this.repliedSinceSpeech) this.cues.awaitReply();
         this.expectReply();
+        // It was speech: reading stays paused for the agent to answer.
+        if (event.text.trim() !== "") {
+          this.readoutPausedBySound = false;
+          this.clearResumeReadout();
+        }
         this.log({ type: "heard", text: event.text });
         this.appendTranscript("user", event.text);
         return;
@@ -1226,7 +1288,7 @@ export class VoiceAgentSessionController {
     this.capturing = true;
     try {
       await this.deps.audio.startCapture(
-        (chunk, level) => this.captured(chunk, level),
+        (chunk, level, speech) => this.captured(chunk, level, speech),
         (message) => {
           if (this.capturing) this.captureFailed(message);
         },
@@ -1238,7 +1300,7 @@ export class VoiceAgentSessionController {
     }
   }
 
-  private captured(chunk: string, level: number): void {
+  private captured(chunk: string, level: number, speech?: number): void {
     if (this.state.phase !== "live") return;
     // Dictation listens and records natively; none of it reaches the agent.
     if (this.state.dictation !== null || this.state.muted) return;
@@ -1246,7 +1308,10 @@ export class VoiceAgentSessionController {
       if (this.state.talking) this.connection?.sendAudio(chunk);
       return;
     }
-    const loud = level >= SPEECH_DBFS;
+    const loud =
+      speech === undefined
+        ? level >= SPEECH_DBFS
+        : speech >= (this.sendingSpeech ? SPEECH_PROBABILITY_HOLD : SPEECH_PROBABILITY_OPEN);
     if (!this.sendingSpeech) {
       if (!loud) {
         this.preRoll.push(chunk);
@@ -1255,8 +1320,13 @@ export class VoiceAgentSessionController {
       }
       this.sendingSpeech = true;
       this.repliedSinceSpeech = false;
-      this.pauseReadoutForUser();
-      this.log({ type: "microphone", status: "speech", level: Math.round(level) });
+      this.pauseReadoutForSound();
+      this.log({
+        type: "microphone",
+        status: "speech",
+        level: Math.round(level),
+        ...(speech === undefined ? {} : { speech: Math.round(speech * 100) / 100 }),
+      });
       for (const held of this.preRoll) this.connection?.sendAudio(held);
       this.preRoll = [];
     }
@@ -1267,6 +1337,7 @@ export class VoiceAgentSessionController {
       this.quietChunks = 0;
       this.connection?.pauseAudio();
       this.log({ type: "microphone", status: "paused" });
+      this.resumeReadoutUnlessHeard();
     }
   }
 

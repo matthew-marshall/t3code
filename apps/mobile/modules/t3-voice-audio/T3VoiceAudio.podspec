@@ -9,7 +9,9 @@ Pod::Spec.new do |s|
   s.platforms = { :ios => '16.1' }
   s.source = { :path => '.' }
   s.source_files = 'ios/**/*.swift'
-  s.frameworks = 'AVFoundation', 'MediaPlayer', 'Speech'
+  # Silero VAD (MIT, see silero_vad.LICENSE), compiled for Core ML.
+  s.resource_bundles = { 'T3VoiceAudioModels' => ['ios/Resources/silero_vad.mlmodelc', 'ios/Resources/silero_vad.LICENSE'] }
+  s.frameworks = 'AVFoundation', 'CoreML', 'MediaPlayer', 'Speech'
   s.swift_version = '5.9'
   s.dependency 'ExpoModulesCore'
 end

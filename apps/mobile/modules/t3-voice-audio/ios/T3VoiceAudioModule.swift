@@ -66,6 +66,16 @@ public final class T3VoiceAudioModule: Module {
   private var observers: [NSObjectProtocol] = []
   /// Capture not yet sent; only the tap thread touches it while an engine runs.
   private var pending = Data()
+  /// Where the speech detector's model ships; nil if the build lacks it.
+  private static let modelBundle = Bundle(for: T3VoiceAudioModule.self)
+    .url(forResource: "T3VoiceAudioModels", withExtension: "bundle")
+    .flatMap(Bundle.init(url:))
+  private static let voiceActivityFormat = AVAudioFormat(
+    commonFormat: .pcmFormatFloat32, sampleRate: VoiceActivityModel.sampleRate, channels: 1,
+    interleaved: false)!
+  /// The highest speech probability since the last chunk went out, and the one before; tap thread.
+  private var speechSinceChunk: Float?
+  private var lastSpeech: Float = 0
   /// Shared by the queue, which opens and closes the gate, and the tap thread, which applies it.
   private let echoGate = OSAllocatedUnfairLock(initialState: EchoGate())
   /// Set by `start`, before the engine that reads it runs.
@@ -318,10 +328,21 @@ public final class T3VoiceAudioModule: Module {
       throw VoiceAudioException(VoiceAudioException.noMicrophone)
     }
     pending = Data()
+    // How likely the microphone hears someone talking, sent with each chunk so hands-free opens
+    // for speech rather than any loud sound. One per engine run, fed only by its tap. Without it
+    // only the level is sent.
+    let detector = Self.modelBundle.flatMap(VoiceActivityModel.init(bundle:))
+    if detector == nil {
+      Self.logger.error("Speech detection is unavailable; hands-free goes by loudness")
+    }
+    speechSinceChunk = nil
+    lastSpeech = 0
+    let detectorConverter =
+      detector == nil ? nil : AVAudioConverter(from: captureFormat, to: Self.voiceActivityFormat)
     input.installTap(
       onBus: 0, bufferSize: AVAudioFrameCount(inputFormat.sampleRate / 10), format: inputFormat
     ) { [weak self] buffer, _ in
-      self?.capture(buffer, converter: converter)
+      self?.capture(buffer, converter: converter, detector: detector, detectorConverter: detectorConverter)
     }
     engine.prepare()
     try engine.start()
@@ -508,7 +529,10 @@ public final class T3VoiceAudioModule: Module {
     ]
   }
 
-  private func capture(_ buffer: AVAudioPCMBuffer, converter: AVAudioConverter) {
+  private func capture(
+    _ buffer: AVAudioPCMBuffer, converter: AVAudioConverter, detector: VoiceActivityModel?,
+    detectorConverter: AVAudioConverter?
+  ) {
     let format = converter.outputFormat
     let capacity =
       AVAudioFrameCount(Double(buffer.frameLength) * format.sampleRate / buffer.format.sampleRate)
@@ -537,6 +561,11 @@ public final class T3VoiceAudioModule: Module {
     if dictationFeeding.withLock({ $0 }) {
       dictationQueue.async { [weak self] in self?.feedDictation(output) }
     }
+    if let detector, let detectorConverter,
+      let speech = detectSpeech(output, detector: detector, converter: detectorConverter)
+    {
+      speechSinceChunk = max(speechSinceChunk ?? 0, speech)
+    }
     pending.append(UnsafeBufferPointer(start: samples[0], count: Int(output.frameLength)))
     while pending.count >= chunkBytes {
       var chunk = Data(pending.prefix(chunkBytes))
@@ -552,9 +581,45 @@ public final class T3VoiceAudioModule: Module {
         return false
       }
       if silenced { chunk.resetBytes(in: 0..<chunk.count) }
-      // The level lets hands-free send only around speech; silenced echo counts as quiet.
-      sendEvent("onCapture", ["data": chunk.base64EncodedString(), "level": silenced ? -120 : level])
+      // A chunk cut before a detector frame finished carries the last probability on.
+      let speech = speechSinceChunk ?? lastSpeech
+      lastSpeech = speech
+      speechSinceChunk = nil
+      // The level and speech probability let hands-free send only around speech; silenced echo
+      // counts as quiet.
+      var event: [String: Any] = [
+        "data": chunk.base64EncodedString(), "level": silenced ? -120 : level,
+      ]
+      if detector != nil { event["speech"] = silenced ? 0 : Double(speech) }
+      sendEvent("onCapture", event)
     }
+  }
+
+  /// The detector's speech probability for frames this capture completed; tap thread.
+  private func detectSpeech(
+    _ capture: AVAudioPCMBuffer, detector: VoiceActivityModel, converter: AVAudioConverter
+  ) -> Float? {
+    let capacity =
+      AVAudioFrameCount(
+        Double(capture.frameLength) * VoiceActivityModel.sampleRate / capture.format.sampleRate) + 16
+    guard
+      let output = AVAudioPCMBuffer(pcmFormat: Self.voiceActivityFormat, frameCapacity: capacity)
+    else { return nil }
+    var consumed = false
+    var error: NSError?
+    converter.convert(to: output, error: &error) { _, status in
+      if consumed {
+        status.pointee = .noDataNow
+        return nil
+      }
+      consumed = true
+      status.pointee = .haveData
+      return capture
+    }
+    guard error == nil, output.frameLength > 0, let samples = output.floatChannelData else {
+      return nil
+    }
+    return detector.feed(UnsafeBufferPointer(start: samples[0], count: Int(output.frameLength)))
   }
 
   private static func dbfs(_ pcm: Data) -> Double {

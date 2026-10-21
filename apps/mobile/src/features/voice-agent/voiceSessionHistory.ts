@@ -91,6 +91,10 @@ function note(line: VoiceLogLine): { readonly text: string; readonly error: bool
       return { text: `Dictation: ${string(line.message)}`, error: true };
     case "readout":
       return { text: `Reading aloud: ${string(line.title)}`, error: false };
+    case "readout-paused":
+      return { text: "Reading paused: a sound might have been you talking", error: false };
+    case "readout-resumed":
+      return { text: "Reading resumed: no speech followed", error: false };
     default:
       return null;
   }

@@ -29,7 +29,8 @@ interface T3VoiceAudioModule {
   stopRecording(): Promise<RecordedAudio | null>;
   addListener(
     event: "onCapture",
-    listener: (event: { data: string; level: number }) => void,
+    /** `speech`: how likely it is someone talking, 0 to 1; missing when detection is unavailable. */
+    listener: (event: { data: string; level: number; speech?: number }) => void,
   ): EventSubscription;
   addListener(
     event: "onInputs",
@@ -117,7 +118,7 @@ export function createNativeVoiceAudio(
       }
       release();
       subscriptions = [
-        module.addListener("onCapture", (event) => onChunk(event.data, event.level)),
+        module.addListener("onCapture", (event) => onChunk(event.data, event.level, event.speech)),
         module.addListener("onError", (event) => onError(event.message)),
         module.addListener("onInputs", (event) => {
           applyInput(event.inputs).catch(() => {});

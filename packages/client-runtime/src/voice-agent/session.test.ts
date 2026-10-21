@@ -62,11 +62,14 @@ function harness(
   const toolCalls: Array<Record<string, unknown>> = [];
   let listThreadsHangs = false;
   let tokens = 0;
-  let onChunk: ((chunk: string, level: number) => void) | null = null;
+  let onChunk: ((chunk: string, level: number, speech?: number) => void) | null = null;
   let onCaptureError: ((message: string) => void) | null = null;
   const audio = {
     startCapture: vi.fn(
-      async (listener: (chunk: string) => void, onError: (message: string) => void) => {
+      async (
+        listener: (chunk: string, level: number, speech?: number) => void,
+        onError: (message: string) => void,
+      ) => {
         onChunk = listener;
         onCaptureError = onError;
       },
@@ -164,7 +167,7 @@ function harness(
     },
     connect,
     // Speech is well above the hands-free threshold unless a test says otherwise.
-    speak: (chunk: string, level = -20) => onChunk?.(chunk, level),
+    speak: (chunk: string, level = -20, speech?: number) => onChunk?.(chunk, level, speech),
     loseMicrophone: (message: string) => onCaptureError?.(message),
   };
 }
@@ -380,6 +383,30 @@ describe("VoiceAgentSessionController", () => {
     expect(sent()).toHaveLength(6 + 15 + 1);
     expect(h.events.filter((event) => event.type === "microphone")).toEqual([
       { type: "microphone", status: "speech", level: -25 },
+      { type: "microphone", status: "paused" },
+    ]);
+  });
+
+  it("hands-free, opens the microphone for speech the platform detects, not for loud noise", async () => {
+    const h = harness();
+    await h.controller.start();
+    const socket = await h.connect();
+    const sent = () => socket.sentOf("realtimeInput").map((message) => message.realtimeInput);
+
+    // A bump and road noise: loud, but not speech.
+    h.speak("bump", -10, 0.02);
+    h.speak("road", -30, 0.1);
+    expect(sent()).toEqual([]);
+
+    h.speak("hello", -40, 0.92);
+    expect(sent().at(-1)).toMatchObject({ audio: { data: "hello" } });
+    // A breath mid-sentence is less certain, but stays above the bar that keeps it open.
+    for (let index = 0; index < 20; index += 1) h.speak("breath", -50, 0.4);
+    expect(sent().at(-1)).toMatchObject({ audio: { data: "breath" } });
+    for (let index = 0; index < 15; index += 1) h.speak("noise", -20, 0.1);
+    expect(sent().at(-1)).toEqual({ audioStreamEnd: true });
+    expect(h.events.filter((event) => event.type === "microphone")).toEqual([
+      { type: "microphone", status: "speech", level: -40, speech: 0.92 },
       { type: "microphone", status: "paused" },
     ]);
   });
@@ -603,6 +630,45 @@ describe("VoiceAgentSessionController", () => {
       expect(h.controller.getState().readout).toMatchObject({ phase: "paused" });
       await vi.advanceTimersByTimeAsync(2_000);
       expect(texts()).toEqual(["[T3 update] Billing needs approval."]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("goes on reading after a noise, but stays paused when the noise was the user talking", async () => {
+    vi.useFakeTimers();
+    try {
+      const synthesize = vi.fn(async (text: string) => `${text}:${"A".repeat(64_000)}`);
+      const h = harness("hands-free", { readAloud: { synthesize } });
+      await h.controller.start();
+      const socket = await h.connect();
+      const sentences = ["One.", "Two.", "Three."].map((text, block) => ({
+        text,
+        block,
+        kind: "text" as const,
+      }));
+      h.controller.requestReadout("Fix login", sentences);
+      await vi.advanceTimersByTimeAsync(1_000);
+      const quiet = () => {
+        for (let chunk = 0; chunk < 15; chunk += 1) h.speak("pcm", -70);
+      };
+
+      // A bump: loud enough to pause, and nothing is transcribed.
+      h.speak("pcm", -20);
+      quiet();
+      expect(h.controller.getState().readout).toMatchObject({ phase: "paused" });
+      await vi.advanceTimersByTimeAsync(2_500);
+      expect(h.controller.getState().readout).toMatchObject({ phase: "reading" });
+      expect(h.events).toContainEqual(
+        expect.objectContaining({ type: "readout-resumed", by: "no-speech" }),
+      );
+
+      // The user talking: transcribed, so reading waits for the agent.
+      h.speak("pcm", -20);
+      socket.receive({ serverContent: { inputTranscription: { text: "Wait, go back." } } });
+      quiet();
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(h.controller.getState().readout).toMatchObject({ phase: "paused" });
     } finally {
       vi.useRealTimers();
     }
