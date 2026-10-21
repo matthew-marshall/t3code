@@ -122,6 +122,10 @@ file that outlasts the session logs.
   you can ask for the other or for a new worktree off a branch you name. Before
   it starts one, the agent reads back the project, the task and where it runs,
   and waits for you to say yes.
+- Voice and Gemini dictation are told your project names and the words in your
+  active threads' titles, so names like these are heard correctly. Add your own
+  under **Vocabulary** (iPhone: Settings → Voice Agent; web and desktop: Settings
+  → General). On-device iPhone dictation does not use it.
 - It does not manage repositories, branches or pull requests; do those in the
   app.
 - With Gemini, ask it to look something up and it searches the web with Google

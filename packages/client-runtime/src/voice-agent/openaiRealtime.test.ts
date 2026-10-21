@@ -23,6 +23,7 @@ const setup = {
   pace: "fast" as const,
   language: "en-US",
   resumptionHandle: null,
+  vocabulary: [],
 };
 
 describe("OpenAI Realtime provider", () => {
@@ -34,6 +35,14 @@ describe("OpenAI Realtime provider", () => {
     expect(connection.url).toBe("wss://api.openai.com/v1/realtime?model=gpt-realtime-2.1");
     expect(connection.protocols).toEqual(["realtime", "openai-insecure-api-key.ek_secret"]);
     expect(provider.inputSampleRate).toBe(24_000);
+  });
+
+  it("hints the transcription at names the user may say", async () => {
+    const { sent, connection } = await connect();
+    connection.setup({ ...setup, mode: "hands-free", vocabulary: ["halfos", "Amlogic"] });
+    expect(sent[0]!.session.audio.input.transcription.prompt).toBe(
+      "Names that may come up: halfos, Amlogic.",
+    );
   });
 
   it("explains a missing or rejected key", async () => {

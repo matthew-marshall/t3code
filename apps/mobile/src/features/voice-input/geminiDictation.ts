@@ -4,6 +4,7 @@ import { File } from "expo-file-system";
 
 import { mobilePreferencesAtom } from "../../state/preferences";
 import { geminiKey } from "../voice-agent/apiKeys";
+import { currentVoiceVocabulary } from "../voice-agent/voiceVocabulary";
 
 /** Dictation through Gemini, which removes filler words; it uses the voice agent's key. */
 export const geminiVoiceTranscriber = createGeminiVoiceTranscriber({
@@ -11,6 +12,7 @@ export const geminiVoiceTranscriber = createGeminiVoiceTranscriber({
   // RecordingPresets.HIGH_QUALITY records AAC in an .m4a container.
   readRecording: async (uri) => ({ data: await new File(uri).base64(), mimeType: "audio/m4a" }),
   locale: Intl.DateTimeFormat().resolvedOptions().locale,
+  vocabulary: currentVoiceVocabulary,
 });
 
 /** Whether dictation goes through Gemini; a boolean, so readers re-render only when it flips. */

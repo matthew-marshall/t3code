@@ -37,6 +37,7 @@ import { vcsEnvironment } from "../../state/vcs";
 import { geminiKey, openAIKey } from "./apiKeys";
 import { createNativeVoiceAudio, logDeviceMarker } from "./nativeVoiceAudio";
 import { appendFeedback, logVoiceEvent } from "./voiceSessionLog";
+import { currentVoiceVocabulary } from "./voiceVocabulary";
 
 /** What the session needs from the navigator; `VoiceAgentHost` keeps it current. */
 export interface VoiceAgentHost {
@@ -161,6 +162,7 @@ export const voiceAgentController: VoiceAgentSessionController = new VoiceAgentS
       const preferences = appAtomRegistry.get(mobilePreferencesAtom);
       return !AsyncResult.isSuccess(preferences) || preferences.value.voiceAgentSoundCues !== false;
     },
+    vocabulary: currentVoiceVocabulary,
     describeContext: () => {
       const onScreen = host?.threadOnScreen;
       if (!onScreen) return null;

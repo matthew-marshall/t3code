@@ -16,6 +16,8 @@ export interface GeminiVoiceTranscriberOptions {
   ) => Promise<{ readonly data: string; readonly mimeType: string }>;
   /** Only used to space the transcript into the draft; Gemini detects the spoken language itself. */
   readonly locale: string;
+  /** Names and jargon to expect, such as project names; read for each recording. */
+  readonly vocabulary?: () => ReadonlyArray<string>;
   readonly fetchImpl?: typeof fetch;
 }
 
@@ -57,6 +59,7 @@ export function createGeminiVoiceTranscriber(
     throwIfVoiceTranscriptionAborted(signal);
     const recording = await options.readRecording(uri);
     throwIfVoiceTranscriptionAborted(signal);
+    const vocabulary = options.vocabulary?.() ?? [];
     let response: Response;
     try {
       response = await fetchImpl(`${GEMINI_API_ORIGIN}/v1beta/interactions`, {
@@ -65,7 +68,12 @@ export function createGeminiVoiceTranscriber(
         body: JSON.stringify({
           model: GEMINI_TRANSCRIBE_MODEL,
           input: [{ type: "audio", data: recording.data, mime_type: recording.mimeType }],
-          generation_config: { transcription_config: { mode: "smart" } },
+          generation_config: {
+            transcription_config: {
+              mode: "smart",
+              ...(vocabulary.length > 0 ? { custom_vocabulary: vocabulary } : {}),
+            },
+          },
         }),
         signal,
       });

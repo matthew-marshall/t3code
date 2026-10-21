@@ -7,6 +7,7 @@ import { type RefObject, useEffect, useRef, useState } from "react";
 
 import { readGeminiKey } from "./voiceAgentKeys";
 import { createWebVoiceRecorder } from "./webVoiceRecorder";
+import { currentVoiceVocabulary } from "./voiceVocabulary";
 
 type Selection = { readonly start: number; readonly end: number };
 
@@ -34,6 +35,7 @@ function createDictationController(
     readApiKey: readGeminiKey,
     readRecording: recording.readRecording,
     locale: navigator.language,
+    vocabulary: currentVoiceVocabulary,
   });
   controller = new VoiceInputController({
     recorder: recording.recorder,

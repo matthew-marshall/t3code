@@ -17,6 +17,7 @@ export {
   type VoiceAgentMode,
 } from "./liveProtocol.ts";
 export { voiceAgentStatus } from "./presentation.ts";
+export { parseVoiceVocabulary, VOICE_VOCABULARY_LIMIT, voiceVocabulary } from "./vocabulary.ts";
 export {
   VoiceAgentSessionController,
   type VoiceAgentAudio,

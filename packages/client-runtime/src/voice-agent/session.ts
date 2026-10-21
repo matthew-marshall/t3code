@@ -232,6 +232,8 @@ export interface VoiceAgentSessionDependencies {
   readonly tools: ReadonlyArray<VoiceAgentTool>;
   /** What the user is looking at, added to the instructions when a connection opens. */
   readonly describeContext?: () => string | null;
+  /** Names the user may say, which recognition tends to mishear; read when a connection opens. */
+  readonly vocabulary?: () => ReadonlyArray<string>;
   readonly openSocket: (
     url: string,
     protocols: ReadonlyArray<string>,
@@ -1048,10 +1050,14 @@ export class VoiceAgentSessionController {
     const context = this.deps.describeContext?.() ?? null;
     // A resumed session remembers the conversation; a fresh one mid-conversation is told it.
     const recap = this.resumptionHandle === null ? transcriptRecap(this.state.transcript) : null;
+    const vocabulary = this.deps.vocabulary?.() ?? [];
     const systemInstruction = [
       this.deps.instructions,
       this.provider.instructions,
       `The user speaks the language with the tag "${this.deps.language}". Always reply in it, and understand everything they say as that language: a phrase that sounds like another language was misheard.`,
+      vocabulary.length === 0
+        ? null
+        : `Names the user may say, which speech recognition often mishears: ${vocabulary.join(", ")}. When something they say sounds like one of these, they mean it.`,
       context === null ? null : `Currently on screen: ${context}`,
       recap === null ? null : `The conversation so far:\n${recap}`,
     ]
@@ -1073,6 +1079,7 @@ export class VoiceAgentSessionController {
       pace: this.speech.pace,
       language: this.deps.language,
       resumptionHandle: this.resumptionHandle,
+      vocabulary,
     };
   }
 

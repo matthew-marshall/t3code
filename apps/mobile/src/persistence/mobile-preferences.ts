@@ -90,6 +90,8 @@ export interface Preferences {
   readonly voiceAgentSoundCues?: boolean;
   readonly voiceAgentPace?: VoiceAgentPace;
   readonly voiceAgentMode?: VoiceAgentMode;
+  /** Extra names for voice and dictation to expect, one per line or separated by commas. */
+  readonly voiceVocabulary?: string;
   readonly projectGroupingEnabled?: boolean;
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
   readonly planModeEnabled?: boolean;
@@ -172,6 +174,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     voiceAgentSoundCues?: boolean;
     voiceAgentPace?: VoiceAgentPace;
     voiceAgentMode?: VoiceAgentMode;
+    voiceVocabulary?: string;
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
     planModeEnabled?: boolean;
@@ -300,6 +303,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (parsed.voiceAgentMode === "push-to-talk" || parsed.voiceAgentMode === "hands-free") {
     preferences.voiceAgentMode = parsed.voiceAgentMode;
+  }
+  if (typeof parsed.voiceVocabulary === "string") {
+    preferences.voiceVocabulary = parsed.voiceVocabulary;
   }
   if (typeof parsed.projectGroupingEnabled === "boolean") {
     preferences.projectGroupingEnabled = parsed.projectGroupingEnabled;

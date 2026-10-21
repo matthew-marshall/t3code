@@ -655,6 +655,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.dictationEnabled !== DEFAULT_UNIFIED_SETTINGS.dictationEnabled
       ? ["Dictation"]
       : []),
+    ...(settings.voiceVocabulary !== DEFAULT_UNIFIED_SETTINGS.voiceVocabulary
+      ? ["Voice vocabulary"]
+      : []),
     ...(settings.showSkillsInSlashMenu !== DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu
       ? ["Show skills in slash menu"]
       : []),
@@ -785,6 +788,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       voiceAgentOpenAIVoice: DEFAULT_UNIFIED_SETTINGS.voiceAgentOpenAIVoice,
       voiceAgentPace: DEFAULT_UNIFIED_SETTINGS.voiceAgentPace,
       dictationEnabled: DEFAULT_UNIFIED_SETTINGS.dictationEnabled,
+      voiceVocabulary: DEFAULT_UNIFIED_SETTINGS.voiceVocabulary,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       composerCollapseOnScroll: DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
@@ -2773,6 +2777,34 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+
+        {settings.voiceAgentEnabled || settings.dictationEnabled ? (
+          <SettingsRow
+            {...searchableSetting("voice-vocabulary")}
+            description="Names voice and dictation tend to mishear, separated by commas. Project names and words from active thread titles are added automatically."
+            resetAction={
+              settings.voiceVocabulary !== DEFAULT_UNIFIED_SETTINGS.voiceVocabulary ? (
+                <SettingResetButton
+                  label="voice vocabulary"
+                  onClick={() =>
+                    updateSettings({ voiceVocabulary: DEFAULT_UNIFIED_SETTINGS.voiceVocabulary })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <DraftInput
+                size="sm"
+                className="w-full sm:w-72"
+                value={settings.voiceVocabulary}
+                onCommit={(next) => updateSettings({ voiceVocabulary: next })}
+                placeholder="halfOS, Novatek, Loki"
+                spellCheck={false}
+                aria-label="Voice vocabulary"
+              />
+            }
+          />
+        ) : null}
 
         {settings.voiceAgentEnabled ? (
           <SettingsRow

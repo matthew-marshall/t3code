@@ -45,6 +45,11 @@ export interface VoiceSessionSetup {
   readonly language: string;
   /** Continues an earlier connection's conversation, when the provider offers that. */
   readonly resumptionHandle: string | null;
+  /**
+   * Names the user may say, such as project names, for providers whose transcription takes hints.
+   * The instructions already list them for the model itself.
+   */
+  readonly vocabulary: ReadonlyArray<string>;
 }
 
 /**

@@ -38,6 +38,7 @@ import { environmentThreadShells, threadEnvironment } from "~/state/threads";
 import { vcsEnvironment } from "~/state/vcs";
 import { buildThreadRouteParams } from "~/threadRoutes";
 import { readGeminiKey, readOpenAIKey } from "./voiceAgentKeys";
+import { currentVoiceVocabulary } from "./voiceVocabulary";
 import { createWebVoiceAudio } from "./webVoiceAudio";
 
 const MODE_STORAGE_KEY = "t3code:voice-agent-mode";
@@ -154,6 +155,7 @@ function createVoiceAgentHandle(initialProvider: VoiceAgentProviderId): VoiceAge
       },
       // The agent switched mode when asked; it is saved like the user's own choice.
       onModeChange: (mode) => localStorage.setItem(MODE_STORAGE_KEY, mode),
+      vocabulary: currentVoiceVocabulary,
       describeContext: () => {
         const threadId = latest.current?.threadId;
         const shell =

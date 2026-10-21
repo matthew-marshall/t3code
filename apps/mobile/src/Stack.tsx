@@ -123,6 +123,7 @@ import { SettingsKeyboardRouteScreen } from "./features/settings/SettingsKeyboar
 import { SettingsLegalRouteScreen } from "./features/settings/SettingsLegalRouteScreen";
 import { SettingsMicrophoneRouteScreen } from "./features/settings/SettingsMicrophoneRouteScreen";
 import { SettingsVoiceAgentRouteScreen } from "./features/settings/SettingsVoiceAgentRouteScreen";
+import { SettingsVoiceVocabularyRouteScreen } from "./features/settings/SettingsVoiceVocabularyRouteScreen";
 import {
   SettingsVoiceDictationsRouteScreen,
   SettingsVoiceSessionRouteScreen,
@@ -348,6 +349,11 @@ const SettingsContentStack = createV5SheetStackNavigator({
       options: {
         title: "Voice Agent",
       },
+    }),
+    SettingsVoiceVocabulary: createNativeStackScreen({
+      screen: SettingsVoiceVocabularyRouteScreen,
+      linking: "voice-agent/vocabulary",
+      options: { title: "Vocabulary" },
     }),
     SettingsVoiceDictations: createNativeStackScreen({
       screen: SettingsVoiceDictationsRouteScreen,

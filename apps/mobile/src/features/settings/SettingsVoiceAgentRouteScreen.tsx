@@ -6,7 +6,7 @@ import {
   type VoiceAgentPace,
   type VoiceAgentProviderId,
 } from "@t3tools/contracts";
-import type { VoiceDictationMode } from "@t3tools/client-runtime/voice-agent";
+import { parseVoiceVocabulary, type VoiceDictationMode } from "@t3tools/client-runtime/voice-agent";
 import { AsyncResult } from "effect/reactivity";
 import { Alert, Linking, Pressable, ScrollView } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -200,6 +200,8 @@ export function SettingsVoiceAgentRouteScreen() {
     );
   const pace = preferences?.voiceAgentPace ?? "normal";
   const dictationMode = preferences?.voiceAgentDictationMode ?? "gemini-batch";
+  const vocabularyCount = parseVoiceVocabulary(preferences?.voiceVocabulary ?? "").length;
+  const navigation = useNavigation();
 
   return (
     <ScrollView
@@ -292,6 +294,18 @@ export function SettingsVoiceAgentRouteScreen() {
             disabled={!ready}
             value={preferences?.voiceAgentSoundCues !== false}
             onValueChange={(value) => savePreferences({ voiceAgentSoundCues: value })}
+          />
+          <SettingsRow
+            icon="text.word.spacing"
+            label="Vocabulary"
+            value={vocabularyCount === 0 ? "Automatic" : `${vocabularyCount} of yours`}
+            valuePosition="trailing"
+            onPress={() =>
+              navigation.navigate("SettingsSheet", {
+                screen: "SettingsContent",
+                params: { screen: "SettingsVoiceVocabulary" },
+              })
+            }
           />
           <ListRowLayout
             icon="text.alignleft"

@@ -118,6 +118,10 @@ export function createOpenAIVoiceProvider(deps: {
                   transcription: {
                     model: TRANSCRIPTION_MODEL,
                     language: setup.language.split("-")[0],
+                    // Its prompt biases recognition towards the words in it.
+                    ...(setup.vocabulary.length > 0
+                      ? { prompt: `Names that may come up: ${setup.vocabulary.join(", ")}.` }
+                      : {}),
                   },
                   // Push-to-talk marks turns itself.
                   turn_detection:

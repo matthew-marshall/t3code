@@ -196,6 +196,15 @@ describe("VoiceAgentSessionController", () => {
     expect(socket.sentOf("realtimeInput").at(-1)!.realtimeInput.audio.data).toBe("pcm");
   });
 
+  it("tells the agent names the user may say, so misheard ones still find their match", async () => {
+    const h = harness("hands-free", { vocabulary: () => ["halfos", "Amlogic"] });
+    await h.controller.start();
+    const socket = await h.connect();
+    expect(socket.sentOf("setup")[0]!.setup.systemInstruction.parts[0].text).toContain(
+      "Names the user may say, which speech recognition often mishears: halfos, Amlogic.",
+    );
+  });
+
   it("reports each step of starting, so the control can show progress", async () => {
     const h = harness();
     await h.controller.start();

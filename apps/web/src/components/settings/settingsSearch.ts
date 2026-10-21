@@ -426,6 +426,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "voice-vocabulary",
+    title: "Voice vocabulary",
+    to: "/settings/general",
+    searchTerms: ["voice dictation vocabulary words names terms jargon misheard recognition"],
+  },
+  {
     id: "voice-agent-provider",
     title: "Voice agent provider",
     to: "/settings/general",
