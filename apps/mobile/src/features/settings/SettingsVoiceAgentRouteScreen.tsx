@@ -11,10 +11,10 @@ import { AsyncResult } from "effect/reactivity";
 import { Alert, Linking, Pressable, ScrollView } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { SymbolView } from "../../components/AppSymbol";
-import { AppText as Text } from "../../components/AppText";
-import { ListRowLayout } from "../../components/ListRowLayout";
-import { ControlPillMenu } from "../../components/ControlPill";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import { ListRowLayout } from "../../components/ui/ListRowLayout";
+import { Menu } from "../../components/ui/Menu";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { geminiKey, openAIKey, useKeySaved } from "../voice-agent/apiKeys";
 import { SettingsActionRow } from "./components/SettingsActionRow";
@@ -224,7 +224,7 @@ export function SettingsVoiceAgentRouteScreen() {
           icon="server.rack"
           label="Provider"
           accessory={
-            <ControlPillMenu
+            <Menu
               actions={(["gemini", "openai"] as const).map((candidate) => ({
                 id: candidate,
                 title: PROVIDERS[candidate].label,
@@ -238,7 +238,7 @@ export function SettingsVoiceAgentRouteScreen() {
               }}
             >
               <MenuValue label="Provider" value={provider.label} disabled={!ready} />
-            </ControlPillMenu>
+            </Menu>
           }
         />
       </SettingsSection>
@@ -250,7 +250,7 @@ export function SettingsVoiceAgentRouteScreen() {
             icon="speaker.wave.2"
             label="Voice"
             accessory={
-              <ControlPillMenu
+              <Menu
                 actions={[
                   { id: "", title: "Default", state: voice === "" ? "on" : "off" },
                   ...provider.voices.map((candidate) => ({
@@ -263,14 +263,14 @@ export function SettingsVoiceAgentRouteScreen() {
                 onPressAction={({ nativeEvent }) => saveVoice(nativeEvent.event)}
               >
                 <MenuValue label="Voice" value={voiceLabel(provider, voice)} disabled={!ready} />
-              </ControlPillMenu>
+              </Menu>
             }
           />
           <ListRowLayout
             icon="speedometer"
             label="Speaking pace"
             accessory={
-              <ControlPillMenu
+              <Menu
                 actions={(["slow", "normal", "fast"] as const).map((candidate) => ({
                   id: candidate,
                   title: PACE_LABELS[candidate],
@@ -284,7 +284,7 @@ export function SettingsVoiceAgentRouteScreen() {
                 }}
               >
                 <MenuValue label="Speaking pace" value={PACE_LABELS[pace]} disabled={!ready} />
-              </ControlPillMenu>
+              </Menu>
             }
           />
           <SettingsSwitchRow
@@ -311,7 +311,7 @@ export function SettingsVoiceAgentRouteScreen() {
             icon="text.alignleft"
             label="Dictation"
             accessory={
-              <ControlPillMenu
+              <Menu
                 actions={(["gemini-batch", "on-device"] as const).map((candidate) => ({
                   id: candidate,
                   title: DICTATION_MODE_LABELS[candidate],
@@ -330,7 +330,7 @@ export function SettingsVoiceAgentRouteScreen() {
                   value={DICTATION_MODE_LABELS[dictationMode]}
                   disabled={!ready}
                 />
-              </ControlPillMenu>
+              </Menu>
             }
           />
         </SettingsSection>

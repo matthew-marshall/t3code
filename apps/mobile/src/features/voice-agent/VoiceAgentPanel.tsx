@@ -5,8 +5,8 @@ import Animated, { FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { FullWindowOverlay } from "react-native-screens";
 
-import { SymbolView } from "../../components/AppSymbol";
-import { AppText as Text } from "../../components/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
 import { cn } from "../../lib/cn";
 import { useDriveScreenShown } from "./driveScreenShown";
 import {

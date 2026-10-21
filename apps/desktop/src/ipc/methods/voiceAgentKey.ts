@@ -35,14 +35,15 @@ const PROVIDER_KEY_NAMES: Record<VoiceAgentProviderId, string> = {
  * settings, which are written as plain JSON. The Gemini key keeps its original
  * file name so keys saved before OpenAI support still load.
  */
-const keyPath = (provider: VoiceAgentProviderId) =>
-  Effect.gen(function* () {
-    const environment = yield* DesktopEnvironment.DesktopEnvironment;
-    return environment.path.join(
-      environment.stateDir,
-      provider === "openai" ? "voice-agent-openai-key.bin" : "voice-agent-key.bin",
-    );
-  });
+const keyPath = Effect.fn("desktop.ipc.voiceAgentKey.keyPath")(function* (
+  provider: VoiceAgentProviderId,
+) {
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  return environment.path.join(
+    environment.stateDir,
+    provider === "openai" ? "voice-agent-openai-key.bin" : "voice-agent-key.bin",
+  );
+});
 
 /** Absent means Gemini, the voice agent's original provider. */
 export const getVoiceAgentKey = DesktopIpc.makeIpcMethod({

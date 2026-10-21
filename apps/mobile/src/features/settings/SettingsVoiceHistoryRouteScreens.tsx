@@ -6,9 +6,9 @@ import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { Alert, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { SymbolView } from "../../components/AppSymbol";
-import { AppText as Text } from "../../components/AppText";
-import { ListRow } from "../../components/ListRow";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import { ListRow } from "../../components/ui/ListRow";
 import { cn } from "../../lib/cn";
 import {
   type DictationRecord,
