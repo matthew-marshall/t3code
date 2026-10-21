@@ -36,6 +36,15 @@ interface NativeVpnTunnelModule {
    * suspended. Missing from builds that predate it.
    */
   reopenListener?(): Promise<{ readonly localPort: number | null }>;
+  /**
+   * Diagnose, through the in-app tunnel: a ping or TCP connect to the workstation, or a connect
+   * to the local forward. Missing from builds that predate it.
+   */
+  probe?(
+    kind: "ping" | "tcp" | "forward",
+    port: number,
+    timeoutMs: number,
+  ): Promise<{ readonly ms: number } | { readonly error: string }>;
   /** Recent timestamped tunnel log lines, oldest first. */
   getLog(): ReadonlyArray<string>;
   /** Whether this build embeds the packet tunnel extension. Missing from older builds. */

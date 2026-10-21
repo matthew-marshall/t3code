@@ -23,6 +23,13 @@ import { connectionStatusText } from "@t3tools/client-runtime/connection";
 import { useEnvironments } from "../../state/environments";
 import { useWorkstationProbe } from "../vpn-tunnel/useWorkstationProbe";
 import {
+  describeProbe,
+  diagnoseVpnTunnel,
+  diagnosisVerdict,
+  SSH_PORT,
+  type VpnDiagnosis,
+} from "../vpn-tunnel/vpnDiagnosis";
+import {
   loadSignInExpiry,
   type SignInExpiry,
   type SignInStatus,
@@ -103,6 +110,22 @@ export function SettingsVpnTunnelRouteScreen() {
 
   const usingSystemVpn = systemVpnAvailable && saved?.background === true;
   const probe = useWorkstationProbe(saved);
+  const [diagnosis, setDiagnosis] = useState<VpnDiagnosis | null>(null);
+  const [diagnosing, setDiagnosing] = useState(false);
+  const diagnose = () => {
+    if (saved === null || diagnosing) return;
+    setDiagnosing(true);
+    void diagnoseVpnTunnel(saved.targetPort)
+      .then((result) => {
+        setDiagnosis(result);
+        // A reopened local port lets connections that failed through it try again now.
+        if (result.reopened) retryTunnelConnections();
+      })
+      .finally(() => {
+        setDiagnosing(false);
+        setLog(nativeVpnTunnel?.getLog() ?? []);
+      });
+  };
   const [expiry, setExpiry] = useState<SignInExpiry | null>(null);
   // The sign-in line is as of when the screen was opened.
   const [openedAt, setOpenedAt] = useState(0);
@@ -266,6 +289,34 @@ export function SettingsVpnTunnelRouteScreen() {
               label="Retry connections now"
               onPress={retryTunnelConnections}
             />
+          ) : null}
+          {saved !== null && !usingSystemVpn && nativeVpnTunnel?.probe !== undefined ? (
+            <SettingsActionRow
+              icon="stethoscope"
+              label={diagnosing ? "Diagnosing…" : "Diagnose"}
+              loading={diagnosing}
+              disabled={diagnosing}
+              onPress={diagnose}
+            />
+          ) : null}
+          {diagnosis !== null && !usingSystemVpn ? (
+            <View className="gap-1 px-4 pb-4">
+              <Text className="text-sm text-foreground-muted">
+                {`App's local port: ${describeProbe(diagnosis.forward, "accepted")}${diagnosis.reopened ? " (reopened)" : ""}`}
+              </Text>
+              <Text className="text-sm text-foreground-muted">
+                {`Ping: ${describeProbe(diagnosis.ping)}`}
+              </Text>
+              <Text className="text-sm text-foreground-muted">
+                {`SSH (port ${SSH_PORT}): ${describeProbe(diagnosis.ssh, "open")}`}
+              </Text>
+              <Text className="text-sm text-foreground-muted">
+                {`T3 (port ${diagnosis.t3Port}): ${describeProbe(diagnosis.t3, "open")}`}
+              </Text>
+              <Text selectable className="pt-1 text-sm text-foreground">
+                {diagnosisVerdict(diagnosis)}
+              </Text>
+            </View>
           ) : null}
         </SettingsSection>
 

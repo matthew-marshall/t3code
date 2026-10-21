@@ -13,7 +13,8 @@
 #define LWIP_UDP 1
 #define LWIP_DNS 1
 #define LWIP_ICMP 1
-#define LWIP_RAW 0
+/* Raw ICMP, for occore_probe's ping. */
+#define LWIP_RAW 1
 #define LWIP_ARP 0
 #define LWIP_ETHERNET 0
 #define LWIP_DHCP 0
@@ -34,6 +35,7 @@
 #define MEMP_NUM_TCP_PCB_LISTEN 4
 #define MEMP_NUM_TCP_SEG 1024
 #define MEMP_NUM_UDP_PCB 8
+#define MEMP_NUM_RAW_PCB 2
 #define MEMP_NUM_SYS_TIMEOUT 16
 #define PBUF_POOL_SIZE 512
 

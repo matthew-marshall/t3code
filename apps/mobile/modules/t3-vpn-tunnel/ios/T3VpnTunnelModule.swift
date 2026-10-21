@@ -90,6 +90,36 @@ public final class T3VpnTunnelModule: Module {
       return ["localPort": Int(occore_local_port(current))]
     }
 
+    // Diagnose: through the in-app tunnel, a ping ("ping") or a TCP connect ("tcp", to port) to
+    // the workstation, or a connect to the local forward ("forward"). Resolves with the round trip
+    // as ["ms": n], or ["error": "timeout" | "refused" | "unresolved" | "down" | "busy" | message].
+    AsyncFunction("probe") { (kind: String, port: Int, timeoutMs: Int, promise: Promise) in
+      DispatchQueue.global(qos: .userInitiated).async {
+        // Held so stop() cannot free the core mid-probe.
+        self.lifecycleLock.lock()
+        defer { self.lifecycleLock.unlock() }
+        self.lock.lock()
+        let current = self.core
+        self.lock.unlock()
+        guard let current else {
+          promise.resolve(["error": "down"])
+          return
+        }
+        let timeout = Int32(max(100, min(timeoutMs, 15_000)))
+        let result: Int32
+        switch kind {
+        case "ping": result = occore_probe(current, Int32(OCCORE_PROBE_PING.rawValue), 0, timeout)
+        case "tcp":
+          result = occore_probe(current, Int32(OCCORE_PROBE_TCP.rawValue), UInt16(clamping: port), timeout)
+        case "forward": result = occore_probe_forward(current, timeout)
+        default:
+          promise.reject("ERR_VPN_PROBE", "Unknown probe \(kind)")
+          return
+        }
+        promise.resolve(result >= 0 ? ["ms": Int(result)] : ["error": Self.probeError(-result)])
+      }
+    }
+
     // The background path: the same tunnel as a system VPN (the packet tunnel extension), which
     // keeps running while the app is closed. Resolves once it is connected.
     AsyncFunction("startSystem") { (options: VpnTunnelStartOptions) in
@@ -143,6 +173,17 @@ public final class T3VpnTunnelModule: Module {
   }
 
   private var statusObserver: NSObjectProtocol?
+
+  private static func probeError(_ code: Int32) -> String {
+    switch code {
+    case ETIMEDOUT: return "timeout"
+    case ECONNREFUSED: return "refused"
+    case EHOSTUNREACH: return "unresolved"
+    case ENETDOWN: return "down"
+    case EBUSY: return "busy"
+    default: return String(cString: strerror(code))
+    }
+  }
 
   private static var extensionBundleIdentifier: String {
     (Bundle.main.bundleIdentifier ?? "") + ".packet-tunnel"

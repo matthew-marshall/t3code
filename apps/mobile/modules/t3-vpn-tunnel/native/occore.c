@@ -37,10 +37,14 @@
 #undef TCP_MSS
 
 #include "lwip/dns.h"
+#include "lwip/icmp.h"
+#include "lwip/inet_chksum.h"
 #include "lwip/init.h"
 #include "lwip/ip4.h"
 #include "lwip/netif.h"
 #include "lwip/pbuf.h"
+#include "lwip/prot/ip4.h"
+#include "lwip/raw.h"
 #include "lwip/tcp.h"
 #include "lwip/timeouts.h"
 
@@ -90,6 +94,13 @@ struct occore {
 	unsigned reopen_generation; /* guarded by lock; bumped after each requested reopen */
 	int reopen_result;      /* guarded by lock */
 	pthread_cond_t reopened;
+	/* One probe at a time (occore_probe); the request and result are guarded by lock. */
+	int probe_busy;         /* a caller is waiting */
+	unsigned probe_request; /* bumped per request; 0 means none pending */
+	unsigned probe_answered;/* the request the result belongs to */
+	int probe_kind, probe_timeout_ms, probe_result;
+	uint16_t probe_port;
+	pthread_cond_t probed;
 	int tun_attached;       /* oc thread only */
 
 	/* net thread only */
@@ -99,6 +110,14 @@ struct occore {
 	int target_state;       /* 0 unresolved, 1 resolving, 2 resolved */
 	struct conn *conns;
 	unsigned next_conn_id;
+	/* The probe in progress, net thread only. Callbacks set probe_outcome; probe_settle publishes. */
+	unsigned probe_running;     /* the request being run; 0 when idle */
+	unsigned probe_seen;        /* the last request taken */
+	int probe_resolving, probe_started, probe_has_outcome, probe_outcome;
+	u32_t probe_t0, probe_deadline;
+	struct tcp_pcb *probe_tcp;
+	struct raw_pcb *probe_raw;
+	u16_t ping_seq;
 	unsigned long long tun_tx, tun_rx; /* packets to / from the gateway */
 	unsigned char pkt[AF_PREFIX_LEN + MAX_PACKET];
 };
@@ -534,6 +553,185 @@ static void accept_local(struct occore *core)
 	}
 }
 
+/* ---------- diagnostic probes (occore_probe) ---------- */
+
+#define PING_ID 0x7433
+
+static const char *probe_name(struct occore *core, char *buf, size_t len)
+{
+	if (core->probe_kind == OCCORE_PROBE_PING)
+		snprintf(buf, len, "Ping %s", core->cfg.target_host);
+	else
+		snprintf(buf, len, "TCP %s:%u", core->cfg.target_host, core->probe_port);
+	return buf;
+}
+
+static void probe_outcome(struct occore *core, int outcome)
+{
+	if (core->probe_has_outcome)
+		return;
+	core->probe_has_outcome = 1;
+	core->probe_outcome = outcome;
+}
+
+static u8_t probe_ping_recv(void *arg, struct raw_pcb *pcb, struct pbuf *p, const ip_addr_t *addr)
+{
+	struct occore *core = arg;
+	struct icmp_echo_hdr *echo;
+	(void)pcb;
+	if (!core->probe_running || !ip_addr_cmp(addr, &core->target_ip) ||
+	    p->tot_len < IP_HLEN + sizeof(*echo) || pbuf_remove_header(p, IP_HLEN))
+		return 0;
+	echo = p->payload;
+	if (ICMPH_TYPE(echo) == ICMP_ER && echo->id == PING_ID && echo->seqno == lwip_htons(core->ping_seq)) {
+		probe_outcome(core, (int)(sys_now() - core->probe_t0));
+		pbuf_free(p);
+		return 1; /* eaten */
+	}
+	pbuf_add_header(p, IP_HLEN);
+	return 0;
+}
+
+static err_t probe_tcp_connected(void *arg, struct tcp_pcb *pcb, err_t err)
+{
+	struct occore *core = arg;
+	(void)pcb;
+	(void)err;
+	probe_outcome(core, (int)(sys_now() - core->probe_t0));
+	return ERR_OK;
+}
+
+static void probe_tcp_err(void *arg, err_t err)
+{
+	struct occore *core = arg;
+	/* lwIP has already freed the pcb. A reset before connecting means the port is closed. */
+	core->probe_tcp = NULL;
+	probe_outcome(core, err == ERR_RST ? -ECONNREFUSED : err == ERR_RTE ? -ENETUNREACH : -EIO);
+}
+
+static void probe_send(struct occore *core)
+{
+	core->probe_started = 1;
+	core->probe_t0 = sys_now();
+	if (core->probe_kind == OCCORE_PROBE_PING) {
+		const u16_t len = sizeof(struct icmp_echo_hdr) + 32;
+		struct pbuf *p;
+		struct icmp_echo_hdr *echo;
+		core->probe_raw = raw_new(IP_PROTO_ICMP);
+		p = pbuf_alloc(PBUF_IP, len, PBUF_RAM);
+		if (!core->probe_raw || !p) {
+			if (p)
+				pbuf_free(p);
+			probe_outcome(core, -ENOMEM);
+			return;
+		}
+		raw_recv(core->probe_raw, probe_ping_recv, core);
+		raw_bind(core->probe_raw, IP_ADDR_ANY);
+		echo = p->payload;
+		ICMPH_TYPE_SET(echo, ICMP_ECHO);
+		ICMPH_CODE_SET(echo, 0);
+		echo->id = PING_ID;
+		echo->seqno = lwip_htons(++core->ping_seq);
+		memset((char *)echo + sizeof(*echo), 'T', len - sizeof(*echo));
+		echo->chksum = 0;
+		echo->chksum = inet_chksum(echo, len);
+		if (raw_sendto(core->probe_raw, p, &core->target_ip) != ERR_OK)
+			probe_outcome(core, -ENETUNREACH);
+		pbuf_free(p);
+		return;
+	}
+	core->probe_tcp = tcp_new();
+	if (!core->probe_tcp) {
+		probe_outcome(core, -ENOMEM);
+		return;
+	}
+	tcp_arg(core->probe_tcp, core);
+	tcp_err(core->probe_tcp, probe_tcp_err);
+	if (tcp_connect(core->probe_tcp, &core->target_ip, core->probe_port, probe_tcp_connected) != ERR_OK) {
+		tcp_arg(core->probe_tcp, NULL);
+		tcp_err(core->probe_tcp, NULL);
+		tcp_abort(core->probe_tcp);
+		core->probe_tcp = NULL;
+		probe_outcome(core, -ENETUNREACH);
+	}
+}
+
+/* Net thread: takes a new request, moves the running one along, and publishes its result. */
+static void probe_step(struct occore *core)
+{
+	char name[300];
+	int result;
+
+	if (!core->probe_running) {
+		pthread_mutex_lock(&core->lock);
+		if (core->probe_request != core->probe_seen) {
+			core->probe_running = core->probe_seen = core->probe_request;
+			core->probe_resolving = core->probe_started = core->probe_has_outcome = 0;
+			core->probe_t0 = sys_now();
+			core->probe_deadline = core->probe_t0 + (u32_t)core->probe_timeout_ms;
+		}
+		pthread_mutex_unlock(&core->lock);
+		if (!core->probe_running)
+			return;
+	}
+	if (!core->probe_has_outcome && !core->probe_started) {
+		if (!core->netif_up)
+			probe_outcome(core, -ENETDOWN);
+		else if (core->target_state == 2)
+			probe_send(core);
+		else if (core->target_state == 0 && core->probe_resolving)
+			probe_outcome(core, -EHOSTUNREACH); /* resolving failed */
+		else if (core->target_state == 0) {
+			core->probe_resolving = 1;
+			resolve_target(core);
+			if (core->target_state == 2)
+				probe_send(core);
+		}
+	}
+	if (!core->probe_has_outcome && (s32_t)(sys_now() - core->probe_deadline) >= 0)
+		probe_outcome(core, -ETIMEDOUT);
+	if (!core->probe_has_outcome)
+		return;
+
+	/* Done: release the probe's pcbs outside their callbacks. */
+	if (core->probe_tcp) {
+		tcp_arg(core->probe_tcp, NULL);
+		tcp_err(core->probe_tcp, NULL);
+		tcp_abort(core->probe_tcp);
+		core->probe_tcp = NULL;
+	}
+	if (core->probe_raw) {
+		raw_remove(core->probe_raw);
+		core->probe_raw = NULL;
+	}
+	result = core->probe_outcome;
+	probe_name(core, name, sizeof(name));
+	if (result >= 0)
+		logf_(core, PRG_INFO, "Diagnose: %s answered in %d ms", name, result);
+	else
+		logf_(core, PRG_INFO, "Diagnose: %s: %s", name,
+		      result == -ETIMEDOUT ? "no answer" :
+		      result == -ECONNREFUSED ? "refused" : strerror(-result));
+	pthread_mutex_lock(&core->lock);
+	core->probe_result = result;
+	core->probe_answered = core->probe_running;
+	pthread_cond_broadcast(&core->probed);
+	pthread_mutex_unlock(&core->lock);
+	core->probe_running = 0;
+}
+
+/* How long poll may sleep without missing the running probe's deadline. */
+static int probe_sleep_ms(struct occore *core, int sleep_ms)
+{
+	s32_t left;
+	if (!core->probe_running)
+		return sleep_ms;
+	left = (s32_t)(core->probe_deadline - sys_now());
+	if (left < 0)
+		left = 0;
+	return left < sleep_ms ? (int)left : sleep_ms;
+}
+
 /* ---------- net thread ---------- */
 
 static void apply_net_config(struct occore *core)
@@ -607,6 +805,7 @@ static void *net_thread_main(void *arg)
 		}
 
 		apply_net_config(core);
+		probe_step(core);
 
 		/* Reap finished connections. */
 		for (struct conn **pp = &core->conns; *pp;) {
@@ -647,7 +846,8 @@ static void *net_thread_main(void *arg)
 		}
 
 		sleep_ms = sys_timeouts_sleeptime();
-		if (poll(fds, (nfds_t)n, sleep_ms == SYS_TIMEOUTS_SLEEPTIME_INFINITE ? 1000 : (int)sleep_ms) < 0 &&
+		if (poll(fds, (nfds_t)n,
+			 probe_sleep_ms(core, sleep_ms == SYS_TIMEOUTS_SLEEPTIME_INFINITE ? 1000 : (int)sleep_ms)) < 0 &&
 		    errno != EINTR)
 			break;
 
@@ -677,8 +877,13 @@ static void *net_thread_main(void *arg)
 		}
 
 		sys_check_timeouts();
+		probe_step(core);
 	}
 
+	if (core->probe_running) {
+		probe_outcome(core, -ECANCELED);
+		probe_step(core);
+	}
 	while (core->conns) {
 		struct conn *c = core->conns;
 		core->conns = c->next;
@@ -712,6 +917,7 @@ static void core_free(struct occore *core)
 	if (core->wake_wr >= 0)
 		close(core->wake_wr);
 	pthread_cond_destroy(&core->reopened);
+	pthread_cond_destroy(&core->probed);
 	pthread_mutex_destroy(&core->lock);
 	for (size_t i = 0; i < sizeof(core->strings) / sizeof(core->strings[0]); i++)
 		free(core->strings[i]);
@@ -761,6 +967,7 @@ static int start(const occore_config *config, occore_network_fn on_network, occo
 	core->oc_tun_fd = core->net_tun_fd = core->listen_fd = core->wake_rd = core->wake_wr = -1;
 	pthread_mutex_init(&core->lock, NULL);
 	pthread_cond_init(&core->reopened, NULL);
+	pthread_cond_init(&core->probed, NULL);
 
 	core->cfg = *config;
 	core->cfg.gateway = own(core, 0, config->gateway);
@@ -907,6 +1114,88 @@ int occore_reopen_listener(occore *core)
 	return ret;
 }
 
+int occore_probe(occore *core, int kind, uint16_t port, int timeout_ms)
+{
+	struct timespec deadline;
+	unsigned request;
+	int ret = -ETIMEDOUT;
+
+	if (core->on_network)
+		return -EINVAL; /* packet mode has no lwIP */
+	if (kind != OCCORE_PROBE_PING && kind != OCCORE_PROBE_TCP)
+		return -EINVAL;
+	pthread_mutex_lock(&core->lock);
+	if (core->probe_busy) {
+		pthread_mutex_unlock(&core->lock);
+		return -EBUSY;
+	}
+	core->probe_busy = 1;
+	core->probe_kind = kind;
+	core->probe_port = port;
+	core->probe_timeout_ms = timeout_ms;
+	request = ++core->probe_request;
+	if (request == 0)
+		request = ++core->probe_request;
+	pthread_mutex_unlock(&core->lock);
+	wake(core);
+
+	/* The net thread enforces timeout_ms; this margin only covers it being stuck. */
+	clock_gettime(CLOCK_REALTIME, &deadline);
+	deadline.tv_sec += timeout_ms / 1000 + 3;
+	pthread_mutex_lock(&core->lock);
+	while (core->probe_answered != request && !core->quit) {
+		if (pthread_cond_timedwait(&core->probed, &core->lock, &deadline) == ETIMEDOUT)
+			break;
+	}
+	if (core->probe_answered == request)
+		ret = core->probe_result;
+	core->probe_busy = 0;
+	pthread_mutex_unlock(&core->lock);
+	return ret;
+}
+
+int occore_probe_forward(occore *core, int timeout_ms)
+{
+	struct sockaddr_in sa = { .sin_family = AF_INET, .sin_port = htons(core->local_port) };
+	struct pollfd pfd;
+	struct timespec t0, t1;
+	int fd, ret = 0, err = 0, one = 1;
+	socklen_t len = sizeof(err);
+
+	if (core->on_network)
+		return -EINVAL;
+	sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	fd = socket(AF_INET, SOCK_STREAM, 0);
+	if (fd < 0)
+		return -errno;
+	setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
+	set_nonblock(fd);
+	clock_gettime(CLOCK_MONOTONIC, &t0);
+	if (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) && errno != EINPROGRESS) {
+		ret = -errno;
+	} else {
+		pfd = (struct pollfd){ .fd = fd, .events = POLLOUT };
+		int ready = poll(&pfd, 1, timeout_ms);
+		if (ready == 0)
+			ret = -ETIMEDOUT;
+		else if (ready < 0)
+			ret = -errno;
+		else if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len) || err)
+			ret = -(err ? err : errno);
+	}
+	close(fd);
+	if (ret == 0) {
+		clock_gettime(CLOCK_MONOTONIC, &t1);
+		ret = (int)((t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000);
+		logf_(core, PRG_INFO, "Diagnose: local forward on 127.0.0.1:%u accepted in %d ms",
+		      core->local_port, ret);
+	} else {
+		logf_(core, PRG_INFO, "Diagnose: local forward on 127.0.0.1:%u: %s", core->local_port,
+		      strerror(-ret));
+	}
+	return ret;
+}
+
 void occore_stop(occore *core)
 {
 	char cmd = OC_CMD_CANCEL;
@@ -922,6 +1211,7 @@ void occore_stop(occore *core)
 	pthread_mutex_lock(&core->lock);
 	core->quit = 1;
 	pthread_cond_broadcast(&core->reopened);
+	pthread_cond_broadcast(&core->probed);
 	pthread_mutex_unlock(&core->lock);
 	wake(core);
 	pthread_join(core->net_thread, NULL);

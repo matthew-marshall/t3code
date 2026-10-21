@@ -120,7 +120,7 @@ build_core() {
   local srcs
   srcs=(
     "$HERE/occore.c"
-    "$lwip"/core/{init,def,dns,inet_chksum,ip,mem,memp,netif,pbuf,stats,sys,tcp,tcp_in,tcp_out,timeouts,udp}.c
+    "$lwip"/core/{init,def,dns,inet_chksum,ip,mem,memp,netif,pbuf,raw,stats,sys,tcp,tcp_in,tcp_out,timeouts,udp}.c
     "$lwip"/core/ipv4/{icmp,ip4,ip4_addr,ip4_frag}.c
   )
   for f in "${srcs[@]}"; do

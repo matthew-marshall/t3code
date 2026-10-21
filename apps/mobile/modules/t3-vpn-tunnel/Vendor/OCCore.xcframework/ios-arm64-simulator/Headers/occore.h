@@ -80,6 +80,28 @@ uint16_t occore_local_port(const occore *core);
  */
 int occore_reopen_listener(occore *core);
 
+enum occore_probe_kind {
+	OCCORE_PROBE_PING = 0,  /* ICMP echo to the target host */
+	OCCORE_PROBE_TCP = 1,   /* TCP connect to the target host on the given port */
+};
+
+/*
+ * Checks the path to the target host through the tunnel, for diagnosing a connection: a ping
+ * tells whether the host is there at all, a TCP connect whether something listens on a port.
+ * Blocks for up to timeout_ms, one probe at a time, and logs the outcome. Returns the round trip
+ * in ms (>= 0), or -ETIMEDOUT (no answer), -ECONNREFUSED (the host refused the port, so it is up
+ * and nothing listens), -EHOSTUNREACH (the target host did not resolve), -ENETDOWN (the tunnel is
+ * not up yet), -EBUSY (another probe is running), or -EINVAL in packet mode.
+ */
+int occore_probe(occore *core, int kind, uint16_t port, int timeout_ms);
+
+/*
+ * Connects to the local forward from inside the app, as a client would. Returns the time to
+ * connect in ms, or -errno: -ECONNREFUSED when iOS has reclaimed the listener (see
+ * occore_reopen_listener).
+ */
+int occore_probe_forward(occore *core, int timeout_ms);
+
 /*
  * How long the gateway lets a sign-in last, in seconds, and how many seconds before the end it
  * asks clients to warn the user; 0 until the gateway has said, which it does on connecting.
