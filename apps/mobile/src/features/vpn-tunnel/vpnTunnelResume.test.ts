@@ -52,6 +52,19 @@ describe("ensureVpnTunnel after the app was suspended", () => {
     expect(mocks.native.reopenListener).toHaveBeenCalledTimes(1);
   });
 
+  it("reopens again after a reopen while the app was woken in the background", async () => {
+    mocks.appState?.("background");
+    // The VPN reconnected while the app was briefly woken, and the app was suspended again.
+    await ensureVpnTunnel(config);
+    expect(mocks.native.reopenListener).toHaveBeenCalledTimes(1);
+
+    mocks.appState?.("active");
+    await ensureVpnTunnel(config);
+    expect(mocks.native.reopenListener).toHaveBeenCalledTimes(2);
+    await ensureVpnTunnel(config);
+    expect(mocks.native.reopenListener).toHaveBeenCalledTimes(2);
+  });
+
   it("uses the port the forward reopened on, and retries the reopen if it failed", async () => {
     mocks.appState?.("background");
     mocks.native.reopenListener.mockRejectedValueOnce(new Error("timed out"));

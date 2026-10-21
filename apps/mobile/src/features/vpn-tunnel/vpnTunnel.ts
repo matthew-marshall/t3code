@@ -169,9 +169,14 @@ let pendingStart: Promise<number> | null = null;
 // through it fails until the app is relaunched. After any trip to the background the next
 // connection reopens the forward first. Doing it here rather than on the "active" event means it
 // cannot race the app's own reconnect on returning to the foreground.
+// iOS also wakes the app in the background for a moment, when the VPN reconnects. A forward
+// reopened then can be reclaimed again before the app is next opened, so only a reopen in the
+// foreground settles it.
 let forwardMayBeReclaimed = false;
+let inBackground = AppState.currentState === "background";
 AppState.addEventListener("change", (state) => {
-  if (state === "background") forwardMayBeReclaimed = true;
+  inBackground = state === "background";
+  if (inBackground) forwardMayBeReclaimed = true;
 });
 
 let pendingReopen: Promise<number> | null = null;
@@ -181,7 +186,7 @@ function reopenForward(native: NonNullable<typeof nativeVpnTunnel>, port: number
   pendingReopen ??= native
     .reopenListener()
     .then((result) => {
-      forwardMayBeReclaimed = false;
+      forwardMayBeReclaimed = inBackground;
       return result.localPort ?? port;
     })
     .finally(() => {
