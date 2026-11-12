@@ -5,12 +5,14 @@ import {
   NAVIGATION_TAB_LABELS,
   navigationCustomizationAvailable,
   resolveHiddenNavigationTabs,
+  unavailableNavigationTabs,
   enabledNavigationTabs,
   type NavigationTab,
 } from "./navigation-tab-order";
 import type { AppSymbolName } from "../../../components/ui/AppSymbol";
 import { mobilePreferencesAtom } from "../../../state/preferences";
 import { PullRequestGlyph } from "../../pull-requests/pullRequestGlyphs";
+import { isVoiceAgentVisible } from "../../voice-agent/useVoiceAgentToggle";
 import { resolveWorkspaceTabOrder } from "./workspace-tabs-state";
 
 export const WORKSPACE_TAB_LABELS = {
@@ -22,6 +24,7 @@ export const NAVIGATION_TAB_ICONS = {
   threads: "text.bubble",
   pullRequests: PullRequestGlyph.pullRequest,
   usage: "chart.bar.xaxis",
+  drive: "car",
 } as const satisfies Readonly<Record<NavigationTab, AppSymbolName>>;
 
 export function useNavigationTabOrder() {
@@ -37,7 +40,8 @@ export function useHiddenNavigationTabs() {
   const saved = AsyncResult.isSuccess(preferences)
     ? preferences.value.hiddenNavigationTabs
     : undefined;
-  return navigationCustomizationAvailable() ? resolveHiddenNavigationTabs(saved) : [];
+  const hidden = navigationCustomizationAvailable() ? resolveHiddenNavigationTabs(saved) : [];
+  return [...hidden, ...unavailableNavigationTabs(isVoiceAgentVisible(preferences))];
 }
 
 export function useEnabledNavigationTabs() {

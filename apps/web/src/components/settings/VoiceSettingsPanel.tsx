@@ -108,6 +108,7 @@ import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import { MicrophoneTest } from "./MicrophoneTest";
 import { CloudVoiceConfiguration } from "./CloudVoiceConfiguration";
+import { VoiceAgentSettingsSection } from "./VoiceAgentSettingsSection";
 import { LanguageRow, ModelBenchmarks, orderSpeechLanguages } from "./SpeechModelComparison";
 import { languageLabel, SpeechLanguageSelect } from "./SpeechLanguageSelect";
 import { filterSpeechModels, type SpeechModelSort } from "./speechModelBrowser";
@@ -1682,6 +1683,7 @@ export function VoiceSettingsPanel() {
           />
         ) : null}
       </SettingsSection>
+      <VoiceAgentSettingsSection />
     </SettingsPageContainer>
   );
 }

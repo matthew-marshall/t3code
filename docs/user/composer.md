@@ -240,6 +240,12 @@ microphone on iOS. Swipe a device left to forget it. Android may use another inp
 when the preferred microphone cannot be routed. Devices with the same name may share
 a saved preference, but simultaneous same-name inputs remain separately selectable.
 
+To have Gemini 3.5 Transcribe drop "um"s, stutters and false starts, turn on
+**Settings → Voice → Remove filler words**. Each recording then goes from your
+iPhone straight to Google with the Gemini API key from **Settings → Voice Agent**,
+is billed to that key, and needs a network connection. Gemini recordings can be up
+to 20 minutes long.
+
 T3 Code deletes the temporary recording from your phone after transcription or
 cancellation. The transcript stays in your draft until you send the message to the agent.
 

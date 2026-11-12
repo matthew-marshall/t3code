@@ -7,7 +7,9 @@ import {
   navigationCustomizationAvailable,
   resolveHiddenNavigationTabs,
   resolveSelectedNavigationTab,
+  unavailableNavigationTabs,
 } from "./navigation-tab-order";
+import { isVoiceAgentVisible } from "../../voice-agent/useVoiceAgentToggle";
 import {
   initialWorkspaceTabsState,
   resolveWorkspaceTabOrder,
@@ -41,9 +43,12 @@ function resolveWorkspaceTabsSelection(
 ): WorkspaceTabsState {
   const saved = AsyncResult.isSuccess(preferences) ? preferences.value : undefined;
   const order = resolveWorkspaceTabOrder(saved?.navigationTabOrder);
-  const hidden = navigationCustomizationAvailable()
-    ? resolveHiddenNavigationTabs(saved?.hiddenNavigationTabs)
-    : [];
+  const hidden = [
+    ...(navigationCustomizationAvailable()
+      ? resolveHiddenNavigationTabs(saved?.hiddenNavigationTabs)
+      : []),
+    ...unavailableNavigationTabs(isVoiceAgentVisible(preferences)),
+  ];
   const selected = resolveSelectedNavigationTab(order, hidden, state.selectedTab);
   return selected && selected !== state.selectedTab
     ? workspaceTabsReducer(state, { type: "select", tab: selected })
@@ -58,6 +63,7 @@ function createWorkspaceTabsModel() {
     threads: 0,
     pullRequests: 0,
     usage: 0,
+    drive: 0,
     settings: 0,
   };
   return {

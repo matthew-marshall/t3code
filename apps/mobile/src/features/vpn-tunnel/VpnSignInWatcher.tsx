@@ -2,6 +2,7 @@ import { useNavigation } from "@react-navigation/native";
 import { useEffect } from "react";
 import { Alert, AppState } from "react-native";
 
+import { voiceAgentController } from "../voice-agent/voiceAgentSession";
 import { nativeVpnTunnel } from "./nativeVpnTunnel";
 import {
   learnSignInExpiry,
@@ -17,9 +18,14 @@ const CHECK_EVERY_MS = 5 * 60 * 1000;
 const time = (at: number) =>
   new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
+/** Tells a running voice session too, so the user hears it while driving. */
+function tellVoiceAgent(text: string): void {
+  if (voiceAgentController.getState().phase === "live") voiceAgentController.sendUpdate(text);
+}
+
 /**
- * Keeps the GlobalProtect sign-in from lapsing unnoticed: warns before it ends (a notification
- * and an in-app prompt), and when the gateway refuses it, offers to sign in
+ * Keeps the GlobalProtect sign-in from lapsing unnoticed: warns before it ends (a notification,
+ * an in-app prompt, and the voice agent), and when the gateway refuses it, offers to sign in
  * instead of leaving T3 reconnecting. Renders nothing.
  */
 export function VpnSignInWatcher() {
@@ -39,6 +45,9 @@ export function VpnSignInWatcher() {
       const cookie = (await loadVpnTunnelConfig())?.cookie ?? "";
       if (!active || expiredFor === cookie) return;
       expiredFor = cookie;
+      tellVoiceAgent(
+        "The VPN sign-in expired, so the workstation is unreachable until the user signs in again in Settings → VPN Tunnel.",
+      );
       Alert.alert("VPN sign-in expired", "Sign in again to reach the workstation.", [
         { text: "Not now", style: "cancel" },
         { text: "Sign in", onPress: openSignIn },
@@ -52,6 +61,9 @@ export function VpnSignInWatcher() {
       if (status.kind === "expiring" && warnedFor !== config.cookie) {
         warnedFor = config.cookie;
         const minutes = Math.max(1, Math.round((status.expiresAt - Date.now()) / 60_000));
+        tellVoiceAgent(
+          `The VPN sign-in expires at ${time(status.expiresAt)}, in about ${minutes} minutes. The user can sign in again in Settings → VPN Tunnel.`,
+        );
         Alert.alert(
           "VPN sign-in expires soon",
           `It ends at ${time(status.expiresAt)}, in about ${minutes} min. Sign in again now to stay connected?`,

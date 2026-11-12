@@ -38,6 +38,8 @@ import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActi
 import { SettingsDragHandle } from "./components/SettingsDragHandle";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
+import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
+import { geminiKey, useKeySaved } from "../voice-agent/apiKeys";
 import {
   deviceMicrophoneOrder,
   localVoiceTranscriberAtom,
@@ -225,6 +227,10 @@ export function SettingsVoiceRouteScreen() {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const ready = AsyncResult.isSuccess(preferencesResult) && !preferencesResult.waiting;
+  const removesFillerWords =
+    AsyncResult.isSuccess(preferencesResult) &&
+    preferencesResult.value.dictationRemovesFillerWords === true;
+  const geminiKeySaved = useKeySaved(geminiKey);
   const entries = deviceMicrophoneOrder(
     AsyncResult.isSuccess(preferencesResult) ? preferencesResult.value.microphones : undefined,
   );
@@ -382,6 +388,24 @@ export function SettingsVoiceRouteScreen() {
           {Platform.OS === "android"
             ? " Android may still use a different microphone if the preferred one can’t be routed."
             : null}
+        </Text>
+        <SettingsSection title="Gemini">
+          <SettingsSwitchRow
+            icon="waveform"
+            label="Remove filler words"
+            subtitle={
+              geminiKeySaved === false
+                ? "Add a Gemini API key in Settings → Voice Agent first"
+                : "Transcribe with Gemini instead of the choice above"
+            }
+            disabled={!ready || (!removesFillerWords && geminiKeySaved !== true)}
+            value={removesFillerWords}
+            onValueChange={(value) => savePreferences({ dictationRemovesFillerWords: value })}
+          />
+        </SettingsSection>
+        <Text className="px-2 text-sm text-foreground-muted">
+          Gemini 3.5 Transcribe drops ums, stutters and false starts. Each recording goes from this
+          phone to Google with your Gemini API key, and is billed to that key.
         </Text>
       </ScrollView>
     </SettingsScreen>

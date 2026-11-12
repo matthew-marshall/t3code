@@ -1,0 +1,7 @@
+{
+  "platforms": ["apple"],
+  "apple": {
+    "modules": ["T3VoiceAudioModule"],
+    "podspecPath": "T3VoiceAudio.podspec"
+  }
+}

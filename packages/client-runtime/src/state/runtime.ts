@@ -394,6 +394,11 @@ export interface AtomQueryOptions extends AtomCommandOptions {
    */
   readonly refresh?: boolean;
   readonly signal?: AbortSignal;
+  /**
+   * Resolve with the first value of a live subscription. A subscription stays waiting for as long
+   * as its stream is open, so without this a one-off read of one never returns.
+   */
+  readonly firstValue?: boolean;
 }
 
 export async function executeAtomQuery<A, E>(
@@ -414,7 +419,7 @@ export async function executeAtomQuery<A, E>(
         });
       }
       return yield* AtomRegistry.getResult(registry, atom, {
-        suspendOnWaiting: true,
+        suspendOnWaiting: options.firstValue !== true,
       });
     }),
   );

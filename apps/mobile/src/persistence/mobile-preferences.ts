@@ -13,9 +13,12 @@ import {
   type ProviderInstanceId,
   type PullRequestMergeMethod,
   type SidebarProjectGroupingMode,
+  type VoiceAgentPace,
+  type VoiceAgentProviderId,
 } from "@t3tools/contracts";
 import { ToolCallVisibility } from "@t3tools/contracts/settings";
 import type { AndroidNavigationStyle } from "../lib/androidNavigationStyle";
+import type { VoiceAgentMode, VoiceDictationMode } from "@t3tools/client-runtime/voice-agent";
 import type { ComposerEnterBehavior } from "../lib/composerEnterBehavior";
 import type { FollowUpBehavior } from "../lib/followUpBehavior";
 import { isMicrophoneKind, type MicrophoneEntry } from "../lib/microphonePriority";
@@ -114,6 +117,23 @@ export interface Preferences {
   readonly composerEnterBehavior?: ComposerEnterBehavior;
   readonly followUpBehavior?: FollowUpBehavior;
   readonly microphones?: ReadonlyArray<MicrophoneEntry>;
+  /** Dictation goes through Gemini 3.5 Transcribe, which drops filler words, instead of the device. */
+  readonly dictationRemovesFillerWords?: boolean;
+  /** Device-local counterparts of web's voice agent beta settings. iOS only. */
+  readonly voiceAgentEnabled?: boolean;
+  readonly voiceAgentProvider?: VoiceAgentProviderId;
+  /** A prebuilt Gemini voice; empty uses Gemini's default. */
+  readonly voiceAgentVoice?: string;
+  /** An OpenAI Realtime voice; empty uses OpenAI's default. */
+  readonly voiceAgentOpenAIVoice?: string;
+  /** How voice dictation is transcribed; Gemini after the recording by default. */
+  readonly voiceAgentDictationMode?: VoiceDictationMode;
+  /** Tool, progress and connection sounds during voice; on unless turned off. */
+  readonly voiceAgentSoundCues?: boolean;
+  readonly voiceAgentPace?: VoiceAgentPace;
+  readonly voiceAgentMode?: VoiceAgentMode;
+  /** Extra names for voice and dictation to expect, one per line or separated by commas. */
+  readonly voiceVocabulary?: string;
   readonly projectGroupingEnabled?: boolean;
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
   readonly toolCallVisibility?: ToolCallVisibility;
@@ -198,6 +218,16 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     composerEnterBehavior?: ComposerEnterBehavior;
     followUpBehavior?: FollowUpBehavior;
     microphones?: ReadonlyArray<MicrophoneEntry>;
+    dictationRemovesFillerWords?: boolean;
+    voiceAgentEnabled?: boolean;
+    voiceAgentProvider?: VoiceAgentProviderId;
+    voiceAgentVoice?: string;
+    voiceAgentOpenAIVoice?: string;
+    voiceAgentDictationMode?: VoiceDictationMode;
+    voiceAgentSoundCues?: boolean;
+    voiceAgentPace?: VoiceAgentPace;
+    voiceAgentMode?: VoiceAgentMode;
+    voiceVocabulary?: string;
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
     toolCallVisibility?: ToolCallVisibility;
@@ -313,6 +343,43 @@ function sanitizePreferences(parsed: Preferences): Preferences {
         ? [{ kind: entry.kind, uid: entry.uid, name: entry.name }]
         : [];
     });
+  }
+  if (typeof parsed.dictationRemovesFillerWords === "boolean") {
+    preferences.dictationRemovesFillerWords = parsed.dictationRemovesFillerWords;
+  }
+  if (typeof parsed.voiceAgentEnabled === "boolean") {
+    preferences.voiceAgentEnabled = parsed.voiceAgentEnabled;
+  }
+  if (parsed.voiceAgentProvider === "gemini" || parsed.voiceAgentProvider === "openai") {
+    preferences.voiceAgentProvider = parsed.voiceAgentProvider;
+  }
+  if (typeof parsed.voiceAgentVoice === "string") {
+    preferences.voiceAgentVoice = parsed.voiceAgentVoice;
+  }
+  if (typeof parsed.voiceAgentOpenAIVoice === "string") {
+    preferences.voiceAgentOpenAIVoice = parsed.voiceAgentOpenAIVoice;
+  }
+  if (typeof parsed.voiceAgentSoundCues === "boolean") {
+    preferences.voiceAgentSoundCues = parsed.voiceAgentSoundCues;
+  }
+  if (
+    parsed.voiceAgentDictationMode === "gemini-batch" ||
+    parsed.voiceAgentDictationMode === "on-device"
+  ) {
+    preferences.voiceAgentDictationMode = parsed.voiceAgentDictationMode;
+  }
+  if (
+    parsed.voiceAgentPace === "slow" ||
+    parsed.voiceAgentPace === "normal" ||
+    parsed.voiceAgentPace === "fast"
+  ) {
+    preferences.voiceAgentPace = parsed.voiceAgentPace;
+  }
+  if (parsed.voiceAgentMode === "push-to-talk" || parsed.voiceAgentMode === "hands-free") {
+    preferences.voiceAgentMode = parsed.voiceAgentMode;
+  }
+  if (typeof parsed.voiceVocabulary === "string") {
+    preferences.voiceVocabulary = parsed.voiceVocabulary;
   }
   if (typeof parsed.projectGroupingEnabled === "boolean") {
     preferences.projectGroupingEnabled = parsed.projectGroupingEnabled;

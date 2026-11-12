@@ -1,4 +1,4 @@
-export const NAVIGATION_TAB_ORDER = ["threads", "pullRequests", "usage"] as const;
+export const NAVIGATION_TAB_ORDER = ["threads", "pullRequests", "usage", "drive"] as const;
 export type NavigationTab = (typeof NAVIGATION_TAB_ORDER)[number];
 
 export function navigationCustomizationAvailable(
@@ -11,6 +11,7 @@ export const NAVIGATION_TAB_LABELS: Readonly<Record<NavigationTab, string>> = {
   threads: "Threads",
   pullRequests: "Pulls",
   usage: "Usage",
+  drive: "Drive",
 };
 
 function isNavigationTab(value: unknown): value is NavigationTab {
@@ -34,6 +35,11 @@ export function moveNavigationTab(
   order.splice(from, 1);
   order.splice(to, 0, tab);
   return order;
+}
+
+/** Drive is the voice agent's driving screen, listed only while voice is turned on (iOS). */
+export function unavailableNavigationTabs(voiceAgentVisible: boolean): readonly NavigationTab[] {
+  return voiceAgentVisible ? [] : ["drive"];
 }
 
 export function resolveHiddenNavigationTabs(saved?: readonly unknown[]): readonly NavigationTab[] {

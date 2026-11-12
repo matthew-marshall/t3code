@@ -25,6 +25,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { useAdaptiveWorkspaceLayout } from "../layout/adaptive-workspace-context";
 import { nativeVpnTunnel } from "../vpn-tunnel/nativeVpnTunnel";
+import { isVoiceAgentAudioAvailable } from "../voice-agent/nativeVoiceAudio";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection, SettingsSidebarContext } from "./components/SettingsSection";
@@ -266,6 +267,9 @@ function useSettingsIndexSections(): SettingsListSection[] {
           : []),
         page("SettingsKeyboard", "keyboard", "Keyboard"),
         page("SettingsVoice", "mic", "Voice"),
+        ...(isVoiceAgentAudioAvailable
+          ? [page("SettingsVoiceAgent", "waveform", "Voice Agent")]
+          : []),
       ],
     },
     {

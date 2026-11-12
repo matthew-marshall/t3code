@@ -16,6 +16,7 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { APP_DISPLAY_NAME, APP_VERSION } from "../branding";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
 import { CommandPalette } from "../components/CommandPalette";
+import { VoiceAgentProvider } from "../voice/VoiceAgentProvider";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { GuestShareDialogHost } from "../components/chat/GuestShareControls";
 import { UseInAnotherAppDialogHost } from "../components/mcp/UseInAnotherAppDialog";
@@ -197,12 +198,14 @@ function RootRouteBranch() {
     </>
   );
   const appShell = (
-    <CommandPalette>
-      {/* Setup starts with an empty workspace, so the Welcome page has no thread list. */}
-      <AppSidebarLayout showSidebar={!isWelcome}>
-        <Outlet />
-      </AppSidebarLayout>
-    </CommandPalette>
+    <VoiceAgentProvider>
+      <CommandPalette>
+        {/* Setup starts with an empty workspace, so the Welcome page has no thread list. */}
+        <AppSidebarLayout showSidebar={!isWelcome}>
+          <Outlet />
+        </AppSidebarLayout>
+      </CommandPalette>
+    </VoiceAgentProvider>
   );
 
   return (

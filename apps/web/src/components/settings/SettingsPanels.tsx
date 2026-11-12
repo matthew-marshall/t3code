@@ -527,6 +527,22 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.proactivePanelsEnabled !== DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled
       ? ["Open pull requests and changes panels proactively"]
       : []),
+    ...(settings.voiceAgentEnabled !== DEFAULT_UNIFIED_SETTINGS.voiceAgentEnabled
+      ? ["Voice agent"]
+      : []),
+    ...(settings.voiceAgentProvider !== DEFAULT_UNIFIED_SETTINGS.voiceAgentProvider
+      ? ["Voice agent provider"]
+      : []),
+    ...(settings.voiceAgentVoice !== DEFAULT_UNIFIED_SETTINGS.voiceAgentVoice ||
+    settings.voiceAgentOpenAIVoice !== DEFAULT_UNIFIED_SETTINGS.voiceAgentOpenAIVoice
+      ? ["Voice agent voice"]
+      : []),
+    ...(settings.voiceAgentPace !== DEFAULT_UNIFIED_SETTINGS.voiceAgentPace
+      ? ["Voice agent speaking pace"]
+      : []),
+    ...(settings.voiceVocabulary !== DEFAULT_UNIFIED_SETTINGS.voiceVocabulary
+      ? ["Voice vocabulary"]
+      : []),
     ...(settings.showSkillsInSlashMenu !== DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu
       ? ["Show skills in slash menu"]
       : []),
@@ -653,6 +669,12 @@ export function useSettingsRestore(onRestored?: () => void) {
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       diffLayout: DEFAULT_UNIFIED_SETTINGS.diffLayout,
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
+      voiceAgentEnabled: DEFAULT_UNIFIED_SETTINGS.voiceAgentEnabled,
+      voiceAgentProvider: DEFAULT_UNIFIED_SETTINGS.voiceAgentProvider,
+      voiceAgentVoice: DEFAULT_UNIFIED_SETTINGS.voiceAgentVoice,
+      voiceAgentOpenAIVoice: DEFAULT_UNIFIED_SETTINGS.voiceAgentOpenAIVoice,
+      voiceAgentPace: DEFAULT_UNIFIED_SETTINGS.voiceAgentPace,
+      voiceVocabulary: DEFAULT_UNIFIED_SETTINGS.voiceVocabulary,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,

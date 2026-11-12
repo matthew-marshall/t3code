@@ -11,6 +11,8 @@ export type VoiceStreamingSession = {
 
 export type PreparedVoiceTranscription = {
   readonly locale: string;
+  /** The longest recording this transcriber takes, when it is not VOICE_RECORDING_LIMIT_SECONDS. */
+  readonly recordingLimitSeconds?: number;
   /**
    * Runs alongside capture once recording starts. Resolves with the transcript when it
    * transcribed live, or null when `transcribe` still runs after the recording stops.

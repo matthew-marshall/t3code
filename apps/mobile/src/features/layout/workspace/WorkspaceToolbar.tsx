@@ -20,6 +20,7 @@ import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { shouldRestoreNativeSearch } from "./workspace-tabs-state";
 import { useFloatingWorkspaceTabs, useSidebarWorkspaceTabs } from "./useSystemWorkspaceTabBar";
 import { WorkspaceTabToolbarButtons } from "./WorkspaceSectionToolbar";
+import { useVoiceAgentToggle } from "../../voice-agent/useVoiceAgentToggle";
 
 const SEARCH_LABELS = {
   threads: "Search threads",
@@ -50,10 +51,12 @@ export function WorkspaceToolbar(props: {
   const { panes } = useWorkspacePaneState();
   const searchRef = useRef<SearchBarCommands>(null);
   const settingsMenu = useSettingsEnvironmentMenu();
+  const voiceAgent = useVoiceAgentToggle();
   // The Settings list takes the selected tab's place, so search follows it.
   const selectedTab = workspace.settingsOpen ? "settings" : workspace.state.selectedTab;
   const tab = workspace.state.tabs[selectedTab];
-  const searchLabel = SEARCH_LABELS[selectedTab === "usage" ? "threads" : selectedTab];
+  const searchLabel =
+    SEARCH_LABELS[selectedTab === "usage" || selectedTab === "drive" ? "threads" : selectedTab];
   const { isTabActive: isListTabActive } = workspace;
   // A retained tab slot stays mounted while another is shown.
   const isTabActive = (tab: typeof selectedTab) =>
@@ -212,6 +215,17 @@ export function WorkspaceToolbar(props: {
               onPress={focusSearch}
             />
           )}
+          {voiceAgent.visible ? (
+            <Toolbar.Button
+              identifier="workspace-voice-agent"
+              // Its own glass pill rather than a slot in the search group: taps near the group's
+              // edge animated the group without reaching this button.
+              separateBackground
+              accessibilityLabel={voiceAgent.active ? "End voice" : "Talk to T3 Code"}
+              icon={voiceAgent.active ? "waveform.circle.fill" : "waveform"}
+              onPress={voiceAgent.toggle}
+            />
+          ) : null}
         </Toolbar>
       )}
       <Toolbar placement="bottom">

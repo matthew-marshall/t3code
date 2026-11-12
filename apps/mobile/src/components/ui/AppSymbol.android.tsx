@@ -78,6 +78,11 @@ import IconGitPullRequest from "@tabler/icons-react-native/IconGitPullRequest";
 import IconHammer from "@tabler/icons-react-native/IconHammer";
 import IconHome from "@tabler/icons-react-native/IconHome";
 import IconInfoCircle from "@tabler/icons-react-native/IconInfoCircle";
+import IconGauge from "@tabler/icons-react-native/IconGauge";
+import IconKey from "@tabler/icons-react-native/IconKey";
+import IconSelector from "@tabler/icons-react-native/IconSelector";
+import IconSpeakerphone from "@tabler/icons-react-native/IconSpeakerphone";
+import IconWaveSine from "@tabler/icons-react-native/IconWaveSine";
 import IconKeyboard from "@tabler/icons-react-native/IconKeyboard";
 import IconKeyboardHide from "@tabler/icons-react-native/IconKeyboardHide";
 import IconLock from "@tabler/icons-react-native/IconLock";
@@ -239,6 +244,11 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   pencil: IconPencil,
   "person.crop.circle": IconUserCircle,
   "person.2": IconUsers,
+  key: IconKey,
+  "speaker.wave.2": IconSpeakerphone,
+  speedometer: IconGauge,
+  waveform: IconWaveSine,
+  "chevron.up.chevron.down": IconSelector,
   "person.fill.checkmark": IconUserCheck,
   "person.fill.xmark": IconUserX,
   "person.badge.clock": IconUserQuestion,

@@ -283,12 +283,17 @@ const config: ExpoConfig = {
       ...(isIosPersonalTeamBuild
         ? { CFBundleDisplayName: repoEnv.T3CODE_IOS_PERSONAL_TEAM_APP_NAME?.trim() || "T3 VPN" }
         : {}),
+      // What Siri accepts as the app's name in shortcut phrases, whatever the build is called.
+      INAlternativeAppNames: [{ INAlternativeAppName: "T3" }, { INAlternativeAppName: "T3 Code" }],
       NSAppTransportSecurity: {
         NSAllowsArbitraryLoads: true,
       },
       NSLocalNetworkUsageDescription:
         "Allow T3 Code to connect to T3 Code servers on your local network or tailnet.",
       NSPhotoLibraryAddUsageDescription: "Allow T3 Code to save images to your photo library.",
+      // Dictation's on-device phrase listener uses SFSpeechRecognizer before iOS 26.
+      NSSpeechRecognitionUsageDescription:
+        "Allow T3 Code to recognize your speech on this device while you dictate.",
       // System picture in picture needs background audio to start and survive outside the app.
       UIBackgroundModes: ["audio"],
       ITSAppUsesNonExemptEncryption: false,
@@ -476,6 +481,8 @@ const config: ExpoConfig = {
     "./plugins/withAndroidWindowDisplayMetrics.cjs",
     "./plugins/withAndroidTabletOrientation.cjs",
     ...(isIosPacketTunnelBuild ? ["./plugins/withPacketTunnelExtension.cjs"] : []),
+    // "Hey Siri, talk to T3" starts a voice session.
+    "./plugins/withVoiceShortcuts.cjs",
   ],
   extra: {
     appVariant: APP_VARIANT,

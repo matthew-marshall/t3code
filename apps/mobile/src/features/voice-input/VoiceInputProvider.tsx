@@ -26,6 +26,7 @@ import { VOICE_WAVEFORM_SAMPLE_COUNT } from "./voiceInputMetering";
 import { VoiceInputSession } from "./voiceInputSession";
 import { createVoiceRecordingPermission } from "./voiceRecordingPermission";
 import { voiceRouteAtom } from "./voiceDestination";
+import { geminiDictationEnabledAtom, geminiVoiceTranscriber } from "./geminiDictation";
 import { makePermissionStatusAtom } from "../../lib/permissionStatusAtom";
 import {
   acquireAudioSession,
@@ -36,11 +37,13 @@ import {
 // The native constructor expects platform-flattened options, as built by useAudioRecorder.
 const { ios: IOS_RECORDING_OPTIONS, android: ANDROID_RECORDING_OPTIONS } =
   RecordingPresets.HIGH_QUALITY;
+// Speech quality: mono AAC at 48 kbps keeps a 20-minute recording near 7 MB, so Gemini still
+// takes it in one request.
 const VOICE_RECORDING_OPTIONS = {
   extension: RecordingPresets.HIGH_QUALITY.extension,
-  sampleRate: RecordingPresets.HIGH_QUALITY.sampleRate,
-  numberOfChannels: RecordingPresets.HIGH_QUALITY.numberOfChannels,
-  bitRate: RecordingPresets.HIGH_QUALITY.bitRate,
+  sampleRate: 24_000,
+  numberOfChannels: 1,
+  bitRate: 48_000,
   isMeteringEnabled: true,
   ...(Platform.OS === "ios" ? IOS_RECORDING_OPTIONS : ANDROID_RECORDING_OPTIONS),
 };
@@ -65,6 +68,7 @@ export const localVoiceTranscriberAtom = makePermissionStatusAtom<
 }).pipe(Atom.keepAlive);
 
 const voiceInputAvailableAtom = Atom.make((get) => {
+  if (get(geminiDictationEnabledAtom)) return true;
   const route = get(voiceRouteAtom);
   if (route) return route.transcriber !== null;
   const transcriber = get(localVoiceTranscriberAtom);
@@ -121,6 +125,8 @@ const voiceInputAtom = Atom.make((get) => {
   const session: VoiceInputSession = new VoiceInputSession({
     recorder,
     getTranscriber: () => {
+      // Read when dictation starts, so switching takes effect on the next recording.
+      if (registry.get(geminiDictationEnabledAtom)) return geminiVoiceTranscriber;
       const route = registry.get(voiceRouteAtom);
       if (route) return route.transcriber;
       const transcriber = registry.get(localVoiceTranscriberAtom);

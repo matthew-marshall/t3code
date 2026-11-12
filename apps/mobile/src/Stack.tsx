@@ -93,6 +93,14 @@ import { SettingsClientStorageRouteScreen } from "./features/settings/SettingsCl
 import { SettingsVpnTunnelRouteScreen } from "./features/settings/SettingsVpnTunnelRouteScreen";
 import { SettingsVpnTunnelLoginRouteScreen } from "./features/settings/SettingsVpnTunnelLoginRouteScreen";
 import { VpnSignInWatcher } from "./features/vpn-tunnel/VpnSignInWatcher";
+import { VoiceAgentHost } from "./features/voice-agent/VoiceAgentHost";
+import { SettingsVoiceAgentRouteScreen } from "./features/settings/SettingsVoiceAgentRouteScreen";
+import { SettingsVoiceVocabularyRouteScreen } from "./features/settings/SettingsVoiceVocabularyRouteScreen";
+import {
+  SettingsVoiceDictationsRouteScreen,
+  SettingsVoiceSessionRouteScreen,
+  SettingsVoiceSessionsRouteScreen,
+} from "./features/settings/SettingsVoiceHistoryRouteScreens";
 import { SettingsDiagnosticsRouteScreen } from "./features/diagnostics/SettingsDiagnosticsRouteScreen";
 import { SettingsProviderAccountsRouteScreen } from "./features/settings/SettingsProviderAccountsRouteScreen";
 import { SettingsAuthRouteScreen } from "./features/settings/SettingsAuthRouteScreen";
@@ -318,6 +326,31 @@ const SETTINGS_SCREENS = {
     linking: "settings/client-storage",
     options: settingsPage("Client Storage"),
   }),
+  SettingsVoiceAgent: createNativeStackScreen({
+    screen: SettingsVoiceAgentRouteScreen,
+    linking: "settings/voice-agent",
+    options: settingsPage("Voice Agent"),
+  }),
+  SettingsVoiceVocabulary: createNativeStackScreen({
+    screen: SettingsVoiceVocabularyRouteScreen,
+    linking: "settings/voice-agent/vocabulary",
+    options: settingsPage("Vocabulary"),
+  }),
+  SettingsVoiceDictations: createNativeStackScreen({
+    screen: SettingsVoiceDictationsRouteScreen,
+    linking: "settings/voice-agent/dictations",
+    options: settingsPage("Dictations"),
+  }),
+  SettingsVoiceSessions: createNativeStackScreen({
+    screen: SettingsVoiceSessionsRouteScreen,
+    linking: "settings/voice-agent/sessions",
+    options: settingsPage("Voice Sessions"),
+  }),
+  SettingsVoiceSession: createNativeStackScreen({
+    screen: SettingsVoiceSessionRouteScreen,
+    linking: "settings/voice-agent/sessions/:name",
+    options: settingsPage("Session"),
+  }),
   SettingsVpnTunnel: createNativeStackScreen({
     screen: SettingsVpnTunnelRouteScreen,
     linking: "settings/vpn-tunnel",
@@ -421,6 +454,7 @@ function RootStackLayout(props: {
     >
       <HardwareKeyboardCommandProvider pathname={pathname}>
         <ShowcaseReadyMarker />
+        <VoiceAgentHost pathname={workspaceLocation.pathname} />
         <VpnSignInWatcher />
         <SettingsEnvironmentFilterProvider open={settingsOpen}>
           <WorkspaceConnectionStatusProvider>

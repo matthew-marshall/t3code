@@ -255,6 +255,11 @@ export class VoiceInputController {
     this.dependencies = dependencies;
   }
 
+  /** How long the current recording may run; its transcriber can allow longer than the default. */
+  get currentRecordingLimitSeconds(): number {
+    return this.transcription?.recordingLimitSeconds ?? VOICE_RECORDING_LIMIT_SECONDS;
+  }
+
   get currentState(): VoiceInputState {
     return this.state;
   }
@@ -355,7 +360,7 @@ export class VoiceInputController {
           },
         );
       }
-      this.dependencies.recorder.record({ forDuration: VOICE_RECORDING_LIMIT_SECONDS });
+      this.dependencies.recorder.record({ forDuration: this.currentRecordingLimitSeconds });
       this.setState({ phase: "recording", error: null, errorAction: null });
     } catch (error) {
       if (this.isCurrent(operationToken))

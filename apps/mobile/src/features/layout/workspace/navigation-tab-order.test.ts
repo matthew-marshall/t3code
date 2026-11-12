@@ -10,6 +10,7 @@ import {
   resolveNavigationTabOrder,
   selectedNavigationTab,
   visibleNavigationTabs,
+  unavailableNavigationTabs,
 } from "./navigation-tab-order";
 
 describe("navigation tab order", () => {
@@ -24,7 +25,7 @@ describe("navigation tab order", () => {
   it("fills missing sections and drops removed placeholders, duplicates, and Settings", () => {
     expect(
       resolveNavigationTabOrder(["usage", "home", "issues", "settings", "usage", null]),
-    ).toEqual(["usage", "threads", "pullRequests"]);
+    ).toEqual(["usage", "threads", "pullRequests", "drive"]);
     expect(resolveNavigationTabOrder()).toEqual(NAVIGATION_TAB_ORDER);
   });
 
@@ -48,10 +49,21 @@ describe("navigation tab order", () => {
     expect(selectedNavigationTab(undefined, "usage", false, [], 2)).toBe("settings");
   });
 
+  it("lists Drive only while the voice agent is on", () => {
+    expect(enabledNavigationTabs(undefined, unavailableNavigationTabs(false))).toEqual([
+      "threads",
+      "pullRequests",
+      "usage",
+    ]);
+    expect(enabledNavigationTabs(undefined, unavailableNavigationTabs(true))).toEqual(
+      NAVIGATION_TAB_ORDER,
+    );
+  });
+
   it("removes hidden sections from navigation and restores their saved positions", () => {
     const order = moveNavigationTab(undefined, "usage", 0);
     const hidden = toggleNavigationTabVisibility([], "usage");
-    expect(enabledNavigationTabs(order, hidden)).toEqual(["threads", "pullRequests"]);
+    expect(enabledNavigationTabs(order, hidden)).toEqual(["threads", "pullRequests", "drive"]);
     expect(toggleNavigationTabVisibility(hidden, "usage")).toEqual([]);
     expect(visibleNavigationTabs(order, [], 5)).toEqual(order);
     expect(enabledNavigationTabs(undefined, ["home", "issues", "settings"])).toEqual(

@@ -1,4 +1,5 @@
 import { EasDeviceHostConfigs, SimlockDeviceHostConfigs, SshDeviceHostConfigs } from "./device.ts";
+import { VoiceAgentPace, VoiceAgentProviderId } from "./voiceAgent.ts";
 import {
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
@@ -513,6 +514,17 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed("steer")),
   ),
   proactivePanelsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // Beta: a live voice agent (Gemini Live or OpenAI Realtime) that drives T3 Code.
+  voiceAgentEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  voiceAgentProvider: VoiceAgentProviderId.pipe(
+    Schema.withDecodingDefault(Effect.succeed("gemini")),
+  ),
+  // Empty uses the provider's default voice. Each provider has its own voices.
+  voiceAgentVoice: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  voiceAgentOpenAIVoice: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  voiceAgentPace: VoiceAgentPace.pipe(Schema.withDecodingDefault(Effect.succeed("normal"))),
+  // Extra names for voice and dictation to expect, separated by commas or new lines.
+  voiceVocabulary: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   showSkillsInSlashMenu: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   boringSidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   boringSidebarMultilineRows: Schema.Boolean.pipe(
@@ -2032,6 +2044,12 @@ export const ClientSettingsPatch = Schema.Struct({
   sendShortcut: Schema.optionalKey(Schema.Literals(["enter", "mod-enter-multiline", "mod-enter"])),
   followUpBehavior: Schema.optionalKey(Schema.Literals(["queue", "steer"])),
   proactivePanelsEnabled: Schema.optionalKey(Schema.Boolean),
+  voiceAgentEnabled: Schema.optionalKey(Schema.Boolean),
+  voiceAgentProvider: Schema.optionalKey(VoiceAgentProviderId),
+  voiceAgentVoice: Schema.optionalKey(Schema.String),
+  voiceAgentOpenAIVoice: Schema.optionalKey(Schema.String),
+  voiceAgentPace: Schema.optionalKey(VoiceAgentPace),
+  voiceVocabulary: Schema.optionalKey(Schema.String),
   showSkillsInSlashMenu: Schema.optionalKey(Schema.Boolean),
   boringSidebarEnabled: Schema.optionalKey(Schema.Boolean),
   boringSidebarMultilineRows: Schema.optionalKey(Schema.Boolean),

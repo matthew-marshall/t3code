@@ -4,7 +4,9 @@ Transcription edits a composer draft. It does not submit an agent turn. Audio is
 temporary client input, and only normal message submission sends the resulting
 text to the agent. Mobile defaults to on-device transcription. Sending audio off
 the device requires an explicit grant naming one environment and, for cloud
-transcription, one provider.
+transcription, one provider. On iOS the user can instead turn on Gemini
+transcription, which sends each recording straight to Google with the client's own
+key, the one the voice agent uses; it never goes through an environment.
 
 The [shared controller](../../packages/client-runtime/src/voice-input/controller.ts)
 owns the operation while the client supplies capture and transcription. Preparation

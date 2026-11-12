@@ -1,5 +1,4 @@
 import {
-  VOICE_RECORDING_LIMIT_SECONDS,
   VoiceInputController,
   voiceInputBlocksSubmission,
   type VoiceDraftSnapshot,
@@ -203,7 +202,7 @@ export class VoiceInputSession {
     }
 
     const elapsedSeconds = Math.min(
-      VOICE_RECORDING_LIMIT_SECONDS,
+      this.controller.currentRecordingLimitSeconds,
       Math.max(0, Math.floor(sample.durationMillis / 1_000)),
     );
     if (elapsedSeconds !== this.snapshot.elapsedSeconds) {

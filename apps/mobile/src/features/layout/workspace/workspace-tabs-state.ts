@@ -46,6 +46,7 @@ export function initialWorkspaceTabsState(): WorkspaceTabsState {
       threads: emptyTab(),
       pullRequests: emptyTab(),
       usage: emptyTab(),
+      drive: emptyTab(),
       settings: emptyTab(),
     },
   };

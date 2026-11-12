@@ -15,6 +15,7 @@ import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import { type ClientSettings, type QuitConfirmationMode, SnapShotShortcut } from "./settings.ts";
 import type { EditorId } from "./editor.ts";
 import { KeybindingShortcut, type PreviewForwardedShortcut } from "./keybindings.ts";
+import type { VoiceAgentProviderId } from "./voiceAgent.ts";
 
 import type {
   DesktopAppActivationRequest,
@@ -1063,6 +1064,13 @@ export interface DesktopBridge {
   getLocalEnvironmentBearerToken: () => Promise<string>;
   getClientSettings: () => Promise<ClientSettings | null>;
   setClientSettings: (settings: ClientSettings) => Promise<void>;
+  /**
+   * The voice agent's key for a provider (Gemini when omitted), encrypted with the OS keychain;
+   * null when none is saved.
+   */
+  getVoiceAgentKey?: (provider?: VoiceAgentProviderId) => Promise<string | null>;
+  /** An empty key removes the saved one. */
+  setVoiceAgentKey?: (key: string, provider?: VoiceAgentProviderId) => Promise<void>;
   getConnectionCatalog: () => Promise<string | null>;
   setConnectionCatalog: (catalog: string) => Promise<boolean>;
   discoverSshHosts: () => Promise<readonly DesktopDiscoveredSshHost[]>;
