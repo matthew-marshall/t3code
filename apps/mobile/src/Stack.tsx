@@ -90,6 +90,9 @@ import { NewTaskRouteScreen } from "./features/threads/NewTaskRouteScreen";
 import { SettingsNavigationRouteScreen } from "./features/settings/SettingsNavigationRouteScreen";
 import { SettingsAppearanceRouteScreen } from "./features/settings/SettingsAppearanceRouteScreen";
 import { SettingsClientStorageRouteScreen } from "./features/settings/SettingsClientStorageRouteScreen";
+import { SettingsVpnTunnelRouteScreen } from "./features/settings/SettingsVpnTunnelRouteScreen";
+import { SettingsVpnTunnelLoginRouteScreen } from "./features/settings/SettingsVpnTunnelLoginRouteScreen";
+import { VpnSignInWatcher } from "./features/vpn-tunnel/VpnSignInWatcher";
 import { SettingsDiagnosticsRouteScreen } from "./features/diagnostics/SettingsDiagnosticsRouteScreen";
 import { SettingsProviderAccountsRouteScreen } from "./features/settings/SettingsProviderAccountsRouteScreen";
 import { SettingsAuthRouteScreen } from "./features/settings/SettingsAuthRouteScreen";
@@ -315,6 +318,16 @@ const SETTINGS_SCREENS = {
     linking: "settings/client-storage",
     options: settingsPage("Client Storage"),
   }),
+  SettingsVpnTunnel: createNativeStackScreen({
+    screen: SettingsVpnTunnelRouteScreen,
+    linking: "settings/vpn-tunnel",
+    options: settingsPage("VPN Tunnel"),
+  }),
+  SettingsVpnTunnelLogin: createNativeStackScreen({
+    screen: SettingsVpnTunnelLoginRouteScreen,
+    linking: "settings/vpn-tunnel/sign-in",
+    options: settingsPage("VPN Sign In"),
+  }),
   SettingsDiagnostics: createNativeStackScreen({
     screen: SettingsDiagnosticsRouteScreen,
     linking: "settings/diagnostics",
@@ -408,6 +421,7 @@ function RootStackLayout(props: {
     >
       <HardwareKeyboardCommandProvider pathname={pathname}>
         <ShowcaseReadyMarker />
+        <VpnSignInWatcher />
         <SettingsEnvironmentFilterProvider open={settingsOpen}>
           <WorkspaceConnectionStatusProvider>
             <AndroidWorkspaceTabsProvider state={props.state}>

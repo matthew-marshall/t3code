@@ -29,6 +29,17 @@ import { clearThreadOutboxEnvironment } from "../state/thread-outbox-removal";
 import { clearComposerDraftsEnvironment } from "../state/use-composer-drafts";
 import { clearThreadComposerErrorsForEnvironment } from "../state/thread-composer-error";
 import { mobileApplicationActiveWakeup } from "./app-state-wakeups";
+import { nativeVpnTunnel } from "../features/vpn-tunnel/nativeVpnTunnel";
+import {
+  ensureSystemVpn,
+  ensureVpnTunnel,
+  isTunnelTarget,
+  loadVpnTunnelConfig,
+  onTunnelReachable,
+  usesSystemVpn,
+  rewriteToTunnel,
+  VpnTunnelSignInRequiredError,
+} from "../features/vpn-tunnel/vpnTunnel";
 import * as ConnectionStorage from "./storage";
 
 function networkStatus(state: Network.NetworkState): "unknown" | "offline" | "online" {
@@ -119,6 +130,13 @@ const networkPathChanges = Stream.callback<"network-changed">((queue) =>
 const layerWakeups = Wakeups.layer({
   changes: Stream.mergeAll(
     [
+      // The VPN tunnel came back: what failed through it can work now.
+      Stream.callback<"network-changed">((queue) =>
+        Effect.acquireRelease(
+          Effect.sync(() => onTunnelReachable(() => Queue.offerUnsafe(queue, "network-changed"))),
+          (unsubscribe) => Effect.sync(unsubscribe),
+        ).pipe(Effect.asVoid),
+      ),
       Stream.callback<"application-active-probe" | "application-active-long">((queue) =>
         Effect.acquireRelease(
           Effect.gen(function* () {
@@ -148,6 +166,43 @@ const layerWakeups = Wakeups.layer({
     ],
     { concurrency: "unbounded" },
   ),
+});
+
+const tunnelConnectionError = (cause: unknown) => {
+  const detail = `VPN tunnel: ${cause instanceof Error ? cause.message : String(cause)}`;
+  return cause instanceof VpnTunnelSignInRequiredError ||
+    detail.includes("rejected the cookie") ||
+    detail.includes("sign-in expired")
+    ? new ConnectionBlockedError({ reason: "authentication", detail })
+    : new ConnectionTransientError({ reason: "network", detail });
+};
+
+// Routes the configured VPN tunnel target through the GlobalProtect tunnel: the system VPN when
+// it is on, else the in-app tunnel's localhost forward.
+const vpnTunnelTransport = ClientCapabilities.DirectEndpointTransport.of({
+  resolve: Effect.fn("mobile.vpnTunnel.resolve")(function* (endpoint) {
+    const config = yield* Effect.promise(() => loadVpnTunnelConfig());
+    if (config === null || !isTunnelTarget(endpoint, config)) return endpoint;
+    if (usesSystemVpn(config)) {
+      // The system VPN routes the workstation itself, so the endpoint stays as it is.
+      yield* Effect.tryPromise({
+        try: () => ensureSystemVpn(config),
+        catch: tunnelConnectionError,
+      });
+      return endpoint;
+    }
+    if (new URL(endpoint.httpBaseUrl).protocol === "https:") {
+      return yield* new ConnectionBlockedError({
+        reason: "unsupported",
+        detail: "The VPN tunnel only supports http:// servers.",
+      });
+    }
+    const localPort = yield* Effect.tryPromise({
+      try: () => ensureVpnTunnel(config),
+      catch: tunnelConnectionError,
+    });
+    return rewriteToTunnel(endpoint, localPort);
+  }),
 });
 
 const layerCapabilities = Layer.effectContext(
@@ -217,6 +272,10 @@ const layerCapabilities = Layer.effectContext(
           metadata: authClientMetadata(Constants.expoConfig?.version),
         }),
       ),
+      (context) =>
+        nativeVpnTunnel === null
+          ? context
+          : Context.add(context, ClientCapabilities.DirectEndpointTransport, vpnTunnelTransport),
       Context.add(
         ClientCapabilities.SshEnvironmentGateway,
         ClientCapabilities.SshEnvironmentGateway.of({

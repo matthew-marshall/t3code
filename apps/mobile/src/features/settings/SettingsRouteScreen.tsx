@@ -24,6 +24,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { useAdaptiveWorkspaceLayout } from "../layout/adaptive-workspace-context";
+import { nativeVpnTunnel } from "../vpn-tunnel/nativeVpnTunnel";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection, SettingsSidebarContext } from "./components/SettingsSection";
@@ -130,6 +131,7 @@ function ConfiguredSettingsRouteScreen() {
           onPress: () => navigation.navigate("SettingsAuth"),
         },
         environmentsRow(Object.keys(savedConnectionsById).length),
+        ...vpnTunnelRows,
         {
           id: "SettingsNotifications",
           icon: "bell.badge",
@@ -143,8 +145,24 @@ function ConfiguredSettingsRouteScreen() {
 
 function LocalSettingsRouteScreen() {
   const { savedConnectionsById } = useSavedRemoteConnections();
-  return <SettingsList connections={[environmentsRow(Object.keys(savedConnectionsById).length)]} />;
+  return (
+    <SettingsList
+      connections={[environmentsRow(Object.keys(savedConnectionsById).length), ...vpnTunnelRows]}
+    />
+  );
 }
+
+const vpnTunnelRows: readonly SettingsListRow[] =
+  nativeVpnTunnel === null
+    ? []
+    : [
+        {
+          id: "SettingsVpnTunnel",
+          icon: { ios: "lock.shield", android: "lock" },
+          label: "VPN Tunnel",
+          target: "SettingsVpnTunnel",
+        },
+      ];
 
 function environmentsRow(count: number): SettingsListRow {
   return {

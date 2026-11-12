@@ -103,8 +103,17 @@ export const preparePairingRegistration = Effect.fn(
 )(function* (input: PairingConnectionInput) {
   const target = yield* resolvePairingTarget(input);
   const presentation = yield* ClientCapabilities.ClientPresentation;
+  // Pairing talks to the server before anything is saved, so it needs the same
+  // endpoint rewrite the bearer broker applies. The profile keeps the real URL.
+  const transport = yield* Effect.serviceOption(ClientCapabilities.DirectEndpointTransport);
+  const endpoint = Option.isSome(transport)
+    ? yield* transport.value.resolve({
+        httpBaseUrl: target.httpBaseUrl,
+        wsBaseUrl: target.wsBaseUrl,
+      })
+    : target;
   const descriptor = yield* fetchRemoteEnvironmentDescriptor({
-    httpBaseUrl: target.httpBaseUrl,
+    httpBaseUrl: endpoint.httpBaseUrl,
   }).pipe(Effect.mapError(mapRemoteEnvironmentError));
   // Checked before redeeming the one-time code, so a wrong link is not spent.
   if (
@@ -139,7 +148,7 @@ export const preparePairingRegistration = Effect.fn(
     return yield* compatibilityError;
   }
   const access = yield* bootstrapRemoteBearerSession({
-    httpBaseUrl: target.httpBaseUrl,
+    httpBaseUrl: endpoint.httpBaseUrl,
     credential: target.credential,
     clientMetadata: presentation.metadata,
   }).pipe(Effect.mapError(mapRemoteEnvironmentError));
@@ -304,6 +313,7 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const ssh = yield* ClientCapabilities.SshEnvironmentGateway;
   const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
+  const transport = yield* Effect.serviceOption(ClientCapabilities.DirectEndpointTransport);
 
   // Provisioning retains the delegated onboarding operation spans.
   return ConnectionOnboarding.of({
@@ -314,6 +324,9 @@ export const make = Effect.gen(function* () {
       Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, registry),
       Effect.provideService(ClientCapabilities.ClientPresentation, presentation),
       Effect.provideService(HttpClient.HttpClient, httpClient),
+      Option.isSome(transport)
+        ? Effect.provideService(ClientCapabilities.DirectEndpointTransport, transport.value)
+        : (effect) => effect,
     ),
     registerSsh: Effect.fnUntraced(
       function* (input) {

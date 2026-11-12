@@ -12,6 +12,8 @@ process.env.EXPO_NO_TYPESCRIPT_SETUP = "1";
 
 const APP_VARIANT = resolveAppVariant(repoEnv.APP_VARIANT);
 const isIosPersonalTeamBuild = repoEnv.T3CODE_IOS_PERSONAL_TEAM === "1";
+// Adds the GlobalProtect packet tunnel extension. Packet tunnel providers need a paid team.
+const isIosPacketTunnelBuild = repoEnv.T3CODE_IOS_PACKET_TUNNEL === "1";
 const runtimeVersionPolicy =
   process.env.MOBILE_VERSION_POLICY ??
   (APP_VARIANT === "development" ? "appVersion" : "fingerprint");
@@ -257,7 +259,9 @@ const config: ExpoConfig = {
     requireFullScreen: process.env.T3_SHOWCASE_CAPTURE_BUILD === "1",
     bundleIdentifier: iosBundleIdentifier,
     // Avoid Personal Team fallback: it cannot sign App Groups, Apple sign-in or push entitlements.
-    appleTeamId: "ARK85ZXQ4Z",
+    // Personal Team builds can name their team so Xcode does not need a manual Team pick.
+    appleTeamId:
+      (isIosPersonalTeamBuild && repoEnv.T3CODE_IOS_PERSONAL_TEAM_ID?.trim()) || "ARK85ZXQ4Z",
     associatedDomains: [
       `applinks:${variant.relyingParty}`,
       `webcredentials:${variant.relyingParty}`,
@@ -265,6 +269,9 @@ const config: ExpoConfig = {
     ],
     entitlements: {
       "keychain-access-groups": [`$(AppIdentifierPrefix)${variant.iosBundleIdentifier}`],
+      ...(isIosPacketTunnelBuild
+        ? { "com.apple.developer.networking.networkextension": ["packet-tunnel-provider"] }
+        : {}),
     },
     infoPlist: {
       UISupportedInterfaceOrientations: [
@@ -272,6 +279,10 @@ const config: ExpoConfig = {
         "UIInterfaceOrientationLandscapeLeft",
         "UIInterfaceOrientationLandscapeRight",
       ],
+      // Personal Team builds sit next to the App Store app; give them their own home-screen name.
+      ...(isIosPersonalTeamBuild
+        ? { CFBundleDisplayName: repoEnv.T3CODE_IOS_PERSONAL_TEAM_APP_NAME?.trim() || "T3 VPN" }
+        : {}),
       NSAppTransportSecurity: {
         NSAllowsArbitraryLoads: true,
       },
@@ -325,6 +336,9 @@ const config: ExpoConfig = {
     favicon: variant.assets.appIcon,
   },
   plugins: [
+    // Registered first so its entitlements mod runs last (same-type mods run
+    // last-registered-first); otherwise expo-notifications re-adds aps-environment.
+    ...(isIosPersonalTeamBuild ? ["./plugins/withoutIosPersonalTeamCapabilities.cjs"] : []),
     "expo-asset",
     [
       "expo-font",
@@ -363,7 +377,8 @@ const config: ExpoConfig = {
         mode: APP_VARIANT === "development" ? "development" : "production",
       },
     ],
-    // Gate Clerk here: withoutIosPersonalTeamCapabilities runs too early to strip its entitlement.
+    // Personal Team builds skip native Sign in with Apple entirely; the entitlement is also
+    // stripped by withoutIosPersonalTeamCapabilities.cjs, which is registered first so it runs last.
     ["@clerk/expo", { theme: "./clerk-theme.json", appleSignIn: !isIosPersonalTeamBuild }],
     "expo-web-browser",
     [
@@ -460,7 +475,7 @@ const config: ExpoConfig = {
     // MainActivity mods run in reverse order; extend the tablet-orientation override.
     "./plugins/withAndroidWindowDisplayMetrics.cjs",
     "./plugins/withAndroidTabletOrientation.cjs",
-    ...(isIosPersonalTeamBuild ? ["./plugins/withoutIosPersonalTeamCapabilities.cjs"] : []),
+    ...(isIosPacketTunnelBuild ? ["./plugins/withPacketTunnelExtension.cjs"] : []),
   ],
   extra: {
     appVariant: APP_VARIANT,
